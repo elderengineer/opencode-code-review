@@ -15,6 +15,17 @@ import { buildPreamble } from "../compiler/preamble.ts";
 import { diffDigest, decodeGitPath } from "../compiler/budget.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
 import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES } from "../compiler/fragments.ts";
+import {
+  buildLadder,
+  readFavorites,
+  normalizeCost,
+  effectiveCost,
+  setActiveLadder,
+  activeLadder,
+  routeRef,
+  type Catalog,
+  type ModelRoute,
+} from "../compiler/route.ts";
 
 let failures = 0;
 function check(name: string, cond: boolean) {
@@ -100,7 +111,139 @@ function check(name: string, cond: boolean) {
   check("model persisted", rememberedModel() === "opencode-go/deepseek-v4-flash");
   rememberModel("not-a-ref");
   check("invalid ref reads as unset", rememberedModel() === undefined);
+  rememberModel("auto");
+  check("auto persisted", rememberedModel() === "auto");
   rememberModel(before);
+}
+
+// --- auto route (--model auto) ----------------------------------------------------
+
+{
+  console.log("auto route");
+
+  // catalog: object and array cost shapes, a $0 plan pot, a stale provider
+  const catalog: Catalog = new Map(Object.entries({
+    "zai-coding-plan/glm-flash": { input: 0, output: 0 },
+    "opencode-go/glm-flash": { input: 0.075, output: 0.25 },
+    "opencode-go/ds-flash": [{ input: 0.22, output: 0.66 }],
+    "deepseek/ds-pro": { input: 0.435, output: 0.87 },
+    "opencode-go/ds-pro": { input: 0.66, output: 1.98 },
+    "prov-x/only-cash": { input: 3, output: 9 },
+  }));
+  check("array cost shape normalized", normalizeCost([{ input: 1, output: 2 }])?.input === 1);
+
+  const favs: ModelRoute[] = [
+    { providerID: "zai-coding-plan", modelID: "glm-flash" },
+    { providerID: "opencode-go", modelID: "ds-flash" },
+    { providerID: "zai-coding-plan", modelID: "glm-flash" }, // duplicate
+    { providerID: "deepseek", modelID: "ds-pro" },
+    { providerID: "stale-prov", modelID: "gone" }, // not in catalog → dropped
+    { providerID: "opencode-go", modelID: "ds-pro" },
+    { providerID: "prov-x", modelID: "only-cash" },
+  ];
+
+  // pot priced via cash sibling (0.1188 < 0.33) → first; stale dropped;
+  // ties (none here) would keep file order; cap 4 applies
+  const ladder = buildLadder(favs, catalog);
+  check("ladder capped at 4", ladder.length === 4);
+  check("pot routes to cheapest first", routeRef(ladder[0].route) === "zai-coding-plan/glm-flash" && ladder[0].pot);
+  check("pot effective price is cash sibling", Math.abs(ladder[0].effective - 0.11875) < 1e-9);
+  check("cash sorted by blended price", routeRef(ladder[1].route) === "opencode-go/ds-flash");
+  check("pricier cash next", routeRef(ladder[2].route) === "deepseek/ds-pro");
+  check("stale favorite dropped", ladder.every((e) => routeRef(e.route) !== "stale-prov/gone"));
+
+  // cap lift shows full order; expensive cash last
+  const full = buildLadder(favs, catalog, 10);
+  check("full ladder keeps cheapest-cash-last", routeRef(full[full.length - 1].route) === "prov-x/only-cash");
+  check("full ladder drops stale only", full.length === 5);
+
+  // unpriced pot with no cash sibling is unusable → dropped
+  const lonely = buildLadder(
+    [{ providerID: "zai-coding-plan", modelID: "glm-flash" }, { providerID: "orphan", modelID: "pot" }],
+    new Map([["orphan/pot", { input: 0, output: 0 }]]),
+  );
+  check("orphan pot dropped", lonely.length === 0);
+  check("effectiveCost of unknown route is undefined", effectiveCost(favs[4], catalog) === undefined);
+
+  // favorites file: tolerant parse, order and dedup
+  const dir = mkdtempSync(join(tmpdir(), "ocr-route-"));
+  const favFile = join(dir, "model.json");
+  writeFileSync(favFile, JSON.stringify({ favorite: [{ providerID: "a", modelID: "x" }, { providerID: "a", modelID: "x" }, { providerID: "b", modelID: "y" }] }));
+  const read = readFavorites(favFile);
+  check("favorites read + deduped in order", read.length === 2 && read[0].modelID === "x" && read[1].modelID === "y");
+  check("missing favorites file tolerated", readFavorites(join(dir, "nope.json")).length === 0);
+  writeFileSync(favFile, "{not json");
+  check("corrupt favorites tolerated", readFavorites(favFile).length === 0);
+  rmSync(dir, { recursive: true, force: true });
+
+  // arg parsing
+  check("--model auto parsed", parseCommand("--model auto high").modelPin === "auto");
+  check("using auto parsed", parseCommand("high using auto").modelPin === "auto");
+  check("--model ref parsed", parseCommand("--model opencode/kimi-k3 high").modelPin === "opencode/kimi-k3");
+  check("--model default parsed", parseCommand("--model default").modelPin === "default");
+  check("--model outranks using", parseCommand("--model auto using opencode/kimi-k3").modelPin === "auto");
+  check("--model value not a target", parseCommand("--model auto").target === "");
+
+  // cell: fallback clause names alternates; low cell stays fleet-free
+  const cellWithFallback = composeCell({
+    level: "high",
+    reviewer: reviewerFor("high"),
+    lenses: EMPTY_BUNDLE,
+    fallbacks: ["reviewer-high-alt1", "reviewer-high-alt2"],
+  });
+  check("fallback clause lists alternates", cellWithFallback.includes("reviewer-high-alt1") && cellWithFallback.includes("reviewer-high-alt2"));
+  check("fallback clause names model-shaped errors", cellWithFallback.includes("usage") && cellWithFallback.includes("quota") && cellWithFallback.includes("402/429"));
+  check("fallback clause fails closed", cellWithFallback.includes("NOT fallbacks") && cellWithFallback.includes("general-purpose"));
+  check("no clause without fallbacks", !composeCell({ level: "high", reviewer: reviewerFor("high"), lenses: EMPTY_BUNDLE }).includes("Model fallback"));
+  check("no clause at low", !composeCell({ level: "low", reviewer: reviewerFor("low"), lenses: EMPTY_BUNDLE, fallbacks: ["reviewer-low-alt1"] }).includes("Model fallback"));
+
+  // preamble notes: typed, active, degraded
+  const autoTyped = buildPreamble({ args: parseCommand("using auto"), remembered: undefined, level: "high" });
+  check("typed auto note", autoTyped.includes("Auto routing queued") && autoTyped.includes("restart opencode"));
+  const ladderFixture: Parameters<typeof setActiveLadder>[0] = [
+    { route: { providerID: "zai-coding-plan", modelID: "glm-flash" }, effective: 0.11875, pot: true },
+    { route: { providerID: "opencode-go", modelID: "ds-flash" }, effective: 0.33, pot: false },
+  ];
+  const autoActive = buildPreamble({
+    args: parseCommand("high"),
+    remembered: undefined,
+    level: "high",
+    pinnedModel: "auto",
+    autoLadder: ladderFixture!,
+  });
+  check("active auto note names primary", autoActive.includes("zai-coding-plan/glm-flash") && autoActive.includes("cheapest of the user's favorite models"));
+  check("active auto note names fallback", autoActive.includes("opencode-go/ds-flash"));
+  check("active auto note marks pot", autoActive.includes("plan pot"));
+  const autoDegraded = buildPreamble({ args: parseCommand("high"), remembered: undefined, level: "high", pinnedModel: "auto", autoLadder: undefined });
+  check("degraded auto note", autoDegraded.includes("no usable favorite ladder"));
+  const badAuto = buildPreamble({ args: parseCommand("using autos"), remembered: undefined, level: "high" });
+  check("near-miss auto pin reported", badAuto.includes("Ignoring unrecognized model pin"));
+
+  // full assembly with a seeded ladder. The active-pin path requires the
+  // sticky state to hold `auto` (as it would after the invocation that typed
+  // it) — composeReview runs with remember:false to leave no trace.
+  const modelBefore = rememberedModel();
+  const composeDir = mkdtempSync(join(tmpdir(), "ocr-compose-auto-"));
+  rememberModel("auto");
+  setActiveLadder(ladderFixture);
+  check("activeLadder roundtrip", activeLadder()?.[0].route.providerID === "zai-coding-plan");
+  const autoRun = await composeReview("high using auto", { worktree: composeDir, remember: false });
+  check("auto pin announcement", autoRun.prompt.includes("zai-coding-plan/glm-flash"));
+  check("auto run names alternate agents", autoRun.prompt.includes("reviewer-high-alt1"));
+  check("auto run keeps primary agent", autoRun.prompt.includes("reviewer-high"));
+  check("autoLadder in result", autoRun.autoLadder?.length === 2);
+  setActiveLadder(undefined);
+  const noLadder = await composeReview("high using auto", { worktree: composeDir, remember: false });
+  check("no ladder → no alternate agents", !noLadder.prompt.includes("reviewer-high-alt1"));
+  check("no ladder → degraded note", noLadder.prompt.includes("no usable favorite ladder"));
+  const nonAuto = await composeReview("high", { worktree: composeDir, remember: false });
+  check("non-auto run has no fallback machinery", !nonAuto.prompt.includes("Model fallback") && !nonAuto.prompt.includes("reviewer-high-alt1"));
+  if (modelBefore === undefined) {
+    rmSync(join(process.env.HOME!, ".local/state/opencode/code-review-model"), { force: true });
+  } else {
+    rememberModel(modelBefore);
+  }
+  rmSync(composeDir, { recursive: true, force: true });
 }
 
 // --- digest (binary-safe numstat) -------------------------------------------------

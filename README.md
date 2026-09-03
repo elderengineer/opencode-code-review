@@ -48,12 +48,13 @@ commands, and agents load at startup only.
 /code-review high       # explicit level
 /code-review low        # quick single-pass scan, no subagents
 /code-review max --fix
+/code-review high --model auto   # cheapest favorite model, auto-fallback
 ```
 
 ## Usage reference
 
 ```
-/code-review [low|medium|high|max] [--fix] [--comment] [<target>] [using <model>]
+/code-review [low|medium|high|max] [--fix] [--comment] [--model auto|<model>] [<target>] [using <model>]
 ```
 
 | piece | meaning |
@@ -62,6 +63,7 @@ commands, and agents load at startup only.
 | `--fix` | apply surviving findings to the working tree, not just report |
 | `--comment` | post findings to the PR (`gh`) or MR (`glab mr note`) |
 | `<target>` | PR number, branch, `a..b` range, or path — narrows the diff under review |
+| `--model` | `auto` (cheapest favorite, see below) or a `provider/model` pin — same as `using` |
 | `using <model>` | pin the fleet model, e.g. `using opencode-go/deepseek-v4-flash` (see [Models & effort](#models--effort)) |
 
 Mistype a level (`hihg`) and the preamble says so and falls back; `--post` is
@@ -94,20 +96,41 @@ default pin is variant on the top rungs:
 
 Two override mechanisms:
 
-1. **`using <model>`** in the command — pins the fleet model for your reviews
-   and sticks until changed. Example: `/code-review medium using opencode-go/deepseek-v4-flash`.
+1. **`using <model>` / `--model <model>`** in the command — pins the fleet
+   model for your reviews and sticks until changed. Example:
+   `/code-review medium using opencode-go/deepseek-v4-flash`.
    `using default` clears the pin.
 
-2. **`model:` in a lens file** — a project lens can pin a model for its own
+2. **`--model auto`** — routes the fleet to the **cheapest of your favorite
+   models** (your TUI ★ list) instead of one fixed model:
+
+   - Prices come from opencode's own catalog, filtered to your connected
+     providers, blended `0.75·input + 0.25·output` (review reads far more
+     than it writes).
+   - Plan-pot models (`$0` in the catalog) are **not** treated as free —
+     they draw down metered quota — so they're priced at the cheapest cash
+     rate of the same model. They still sort first, honestly.
+   - Favorites missing from the catalog (renamed/deprecated) are dropped.
+   - The top 4 form a ladder: the cheapest runs the fleet, and the composed
+     prompt instructs a fallback to the next reviewer on model-shaped
+     failures (quota, credits, 402/429, rate limits, overloaded).
+     Confinement/contract failures still fail closed; no ever re-routes to a
+     general-purpose agent. Ladder exhausted → the review aborts with the
+     list of models tried.
+   - Ladder order at a glance: `bun compiler/cli.ts high --model auto --server http://127.0.0.1:4096`
+
+3. **`model:` in a lens file** — a project lens can pin a model for its own
    specialist finder (see [Project lenses](#project-lenses)). Example: a
    `security.md` lens running on a different model than the general fleet.
 
 **Mechanic, honestly:** opencode binds a subagent's model from its agent
-definition at startup — the task tool has no per-call model parameter. So both
-overrides are read when the plugin loads: `using` persists to a sticky state
-file and pins the `reviewer-*` agents, lens `model:` pins spawn per-lens
-agents (`reviewer-lens-<name>`). Either way, **restart opencode after changing
-them** for the new model to take effect.
+definition at startup — the task tool has no per-call model parameter. So all
+overrides are read when the plugin loads: `using`/`--model` persists to a
+sticky state file and pins the `reviewer-*` agents (with `auto`, it also
+resolves the ladder and injects hidden `reviewer-<level>-alt<N>` alternates),
+lens `model:` pins spawn per-lens agents (`reviewer-lens-<name>`). Either
+way, **restart opencode after changing them** for the new model to take
+effect.
 
 ## How a review runs
 
@@ -205,7 +228,9 @@ without confirmation, and explains what needs a restart.
 The plugin injects four hidden subagents, `reviewer-low` … `reviewer-max` —
 read-only (read/grep/glob/list; edit/bash/webfetch denied), one per effort
 rung, used for finders, verifiers, and the sweep. Plus one
-`reviewer-lens-<name>` per project lens (its `model:`/`variant:` pins bind at startup).
+`reviewer-lens-<name>` per project lens (its `model:`/`variant:` pins bind at
+startup). With `--model auto`, hidden `reviewer-<level>-alt<N>` alternates
+carry the rest of the cost ladder.
 
 Projects override any of them field-by-field in `.opencode/opencode.json` —
 user config always wins:
@@ -236,7 +261,8 @@ ignored.
 | `~/.config/opencode/opencode-code-review/` | installed copy opencode loads — sync after changes |
 | `~/.config/opencode/opencode.json` | plugin registration |
 | `~/.local/state/opencode/code-review-level` | sticky effort level |
-| `~/.local/state/opencode/code-review-model` | sticky `using` model |
+| `~/.local/state/opencode/code-review-model` | sticky model pin (`auto` or `provider/model`) |
+| `~/.local/state/opencode/model.json` | your TUI favorite/recent models — read (never written) to build the `--model auto` ladder |
 | `<repo>/.opencode/code-review/lenses/` | project lenses |
 
 ## Development
@@ -246,6 +272,7 @@ bun test/verify.ts              # behavioral checks
 bun compiler/cli.ts --cells     # dump the four level cells (snapshot)
 bun compiler/cli.ts high --fix  # inspect a composed prompt
 bun compiler/cli.ts --worktree <dir> low
+bun compiler/cli.ts high --model auto --server http://127.0.0.1:4096  # inspect the auto ladder
 ```
 
 Prompt composition is deterministic code in `compiler/` (zero runtime deps:
@@ -259,6 +286,12 @@ the installed copy, restart opencode. See `AGENTS.md` for conventions.
   load; toolsets snapshot at session creation. New session, or restart.
 - **`using <model>` had no effect** — it pins at next opencode start by
   design; check `~/.local/state/opencode/code-review-model`.
+- **`--model auto` runs the session model** — no usable ladder was resolved:
+  favorites empty, none of their providers connected, or the catalog was
+  unreachable at startup. Star models in the TUI picker and restart.
+- **Auto ladder skipped a favorite** — it's absent from the connected
+  catalog (renamed/deprecated) or an unpriced pot with no cash sibling; the
+  ladder only contains models you can actually call.
 - **Lens specialist didn't spawn / model didn't apply** — lens agents
   register at plugin load; restart after adding the lens file.
 - **Review found nothing but I have changes** — untracked files are invisible

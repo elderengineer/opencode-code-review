@@ -7,6 +7,7 @@ import { LEVELS, type Level } from "./compiler/fragments.ts";
 import { composeReview, reviewerFor } from "./compiler/prompt.ts";
 import { rememberedModel } from "./compiler/effort.ts";
 import { readLensPins, type LensPins } from "./compiler/lenses.ts";
+import { resolveAutoLadder, setActiveLadder, routeRef, type LadderEntry } from "./compiler/route.ts";
 
 /**
  * opencode plugin entry. On startup the config hook injects:
@@ -14,8 +15,12 @@ import { readLensPins, type LensPins } from "./compiler/lenses.ts";
  *     model executes)
  *   - reviewer-<level> subagents, one per effort level (the subagent fleet):
  *     by default they inherit the session model and variant; `max` pins
- *     variant "max"; a sticky `using <model>` pin (state file) overrides the
- *     model for all of them until the plugin next loads
+ *     variant "max"; a sticky `using <model>`/`--model` pin (state file)
+ *     overrides the model for all of them until the plugin next loads;
+ *     `--model auto` resolves the cost-ordered favorite ladder at startup,
+ *     pins the primary to its cheapest entry and injects hidden
+ *     reviewer-<level>-alt<i> alternates the prompt falls back to on
+ *     model-shaped failures (quota, credits, rate limits)
  *   - reviewer-lens-<name> subagents, one per project lens in the session's
  *     worktree, carrying the lens's optional model/variant pins
  *
@@ -73,13 +78,13 @@ function mergeAgentDefaults(def: Record<string, unknown>, user: Record<string, u
   return merged;
 }
 
-function reviewerAgent(level: Level, body: string, pinnedModel: string | undefined) {
+function reviewerAgent(level: Level, body: string, modelRef: string | undefined, altNote = "") {
   const { variant, color } = FLEET[level];
   return {
-    description: `Finder/verifier subagent for the code-review command at ${level} effort.`,
+    description: `Finder/verifier subagent for the code-review command at ${level} effort.${altNote}`,
     mode: "subagent",
     hidden: true,
-    ...(pinnedModel ? { model: pinnedModel } : {}),
+    ...(modelRef ? { model: modelRef } : {}),
     ...(variant ? { variant } : {}),
     temperature: 0.1,
     color,
@@ -107,7 +112,7 @@ function lensAgent(pin: LensPins, body: string) {
 
 const COMMAND_DESCRIPTION =
   "Review the current diff or a PR for bugs and cleanups. " +
-  "Usage: [low|medium|high|max] [--fix] [--comment] [<pr#>|<branch>|<path>]";
+  "Usage: [low|medium|high|max] [--fix] [--comment] [--model auto|<provider/model>] [<pr#>|<branch>|<path>]";
 
 const CREATE_LENS_DESCRIPTION =
   "Create a project lens for code-review (interactive): goal, name, model, " +
@@ -123,6 +128,24 @@ export const CodeReviewPlugin: PluginModule = {
     ]);
     const lensPins = await readLensPins(input.worktree || input.directory || process.cwd());
     const pinnedModel = rememberedModel();
+
+    // `--model auto`: resolve the cost-ordered favorite ladder now — the
+    // agents injected below pin to it, so a mid-session pin change still
+    // waits for the next plugin load, like any explicit pin.
+    let autoLadder: LadderEntry[] | undefined;
+    if (pinnedModel === "auto") {
+      try {
+        autoLadder = await resolveAutoLadder(input.serverUrl);
+      } catch (err) {
+        console.warn(`[opencode-code-review] auto ladder resolution failed: ${err}`);
+      }
+      setActiveLadder(autoLadder);
+      if (autoLadder === undefined) {
+        console.warn("[opencode-code-review] --model auto active but no usable favorite ladder; reviewers inherit the session model");
+      }
+    }
+    const fleetPin = pinnedModel === "auto" ? autoLadder?.[0] : undefined;
+    const primaryModel = fleetPin ? routeRef(fleetPin.route) : pinnedModel === "auto" ? undefined : pinnedModel;
     return {
       config: (cfg) => {
         cfg.command ??= {};
@@ -138,7 +161,16 @@ export const CodeReviewPlugin: PluginModule = {
         cfg.agent ??= {};
         for (const level of LEVELS) {
           const name = reviewerFor(level);
-          cfg.agent[name] = mergeAgentDefaults(reviewerAgent(level, reviewerBody, pinnedModel), cfg.agent[name] ?? {});
+          cfg.agent[name] = mergeAgentDefaults(reviewerAgent(level, reviewerBody, primaryModel), cfg.agent[name] ?? {});
+          // Auto-ladder alternates: cost-ordered fallback subagents the
+          // composed prompt names for model-shaped spawn failures.
+          autoLadder?.slice(1).forEach((entry, i) => {
+            const altName = `${name}-alt${i + 1}`;
+            cfg.agent![altName] = mergeAgentDefaults(
+              reviewerAgent(level, reviewerBody, routeRef(entry.route), ` (auto-ladder alternate ${i + 1}: ${routeRef(entry.route)})`),
+              cfg.agent![altName] ?? {},
+            );
+          });
         }
         for (const pin of lensPins) {
           const name = `reviewer-lens-${pin.name}`;

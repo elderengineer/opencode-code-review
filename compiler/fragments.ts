@@ -29,6 +29,28 @@ export const SPAWN_FALLBACK_NOTE =
   `that same subagent once; on a second failure, run that lens or verification ` +
   `yourself in this context instead of skipping it.`;
 
+/**
+ * Added for `--model auto`: the fleet runs a cost-ordered ladder of the
+ * user's favorite models; model-shaped spawn failures advance to the next
+ * alternate subagent instead of dying or degrading to a default agent.
+ */
+export const MODEL_FALLBACK_CLAUSE = (primary: string, alternates: string[]) => `### Model fallback
+
+The reviewer fleet runs on the cheapest of the user's favorite models: the
+primary reviewer subagent is \`${primary}\`, and the alternates
+${alternates.map((a) => `\`${a}\``).join(", ")} run progressively pricier models.
+If a spawn of \`${primary}\` fails with a model- or route-shaped error — usage
+limit, quota exhausted, credits/insufficient balance, 402/429, rate limit,
+overloaded, model unavailable or not found — do not retry it: re-issue the
+identical task to the next alternate subagent in the order above. The same
+applies when an alternate itself fails that way. Confinement and contract
+failures are NOT fallbacks — a permission denial or malformed findings output
+fails the review closed, exactly as it would without this clause. Never re-route
+a reviewer task to a general-purpose or default agent. If every alternate fails
+with a model-shaped error, stop and report the review as aborted, listing the
+models that were tried.
+`;
+
 // ---------------------------------------------------------------------------
 // Phase fragments
 // ---------------------------------------------------------------------------

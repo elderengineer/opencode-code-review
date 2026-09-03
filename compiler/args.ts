@@ -7,9 +7,9 @@ import { LEVELS } from "./fragments.ts";
  * of it).
  *
  * Leading flags: --comment, --fix, --post, --no-post. `using <provider/model>`
- * pins the fleet model (`using default` clears the pin). The first remaining
- * token may be an effort level. Everything after the level is the review
- * target.
+ * or `--model <value>` pins the fleet model (`default` clears the pin, `auto`
+ * routes to the cheapest favorite). The first remaining token may be an effort
+ * level. Everything after the level is the review target.
  */
 
 export interface CommandInvocation {
@@ -28,6 +28,9 @@ export interface CommandInvocation {
 
 const KNOWN_FLAGS = new Set(["comment", "fix", "post", "no_post"]);
 
+/** `--flag <value>` flags — the value is the next token, not a positional. */
+const VALUE_FLAGS = new Set(["model"]);
+
 /** `provider/model` — the shape opencode expects in agent `model` fields. */
 export const MODEL_REF_RE = /^[a-z0-9][\w.-]*\/[\w.-]+$/i;
 
@@ -35,19 +38,26 @@ export const MODEL_REF_RE = /^[a-z0-9][\w.-]*\/[\w.-]+$/i;
  * Collect known `--flag` tokens wherever they appear (levels come first in
  * the usage string, so flags may sit before or after the level/target).
  */
-function scanFlags(tokens: string[]): { flags: Set<string>; rest: string[] } {
+function scanFlags(tokens: string[]): { flags: Set<string>; rest: string[]; modelFlag: string | undefined } {
   const flags = new Set<string>();
   const rest: string[] = [];
-  for (const tok of tokens) {
+  let modelFlag: string | undefined;
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
     const m = tok.match(/^--([A-Za-z-]+)$/);
     const name = m?.[1].replaceAll("-", "_").toLowerCase();
+    if (m && name !== undefined && VALUE_FLAGS.has(name) && tokens[i + 1] !== undefined) {
+      modelFlag = tokens[i + 1].replaceAll("`", "").replaceAll("'", "").replaceAll('"', "");
+      i++;
+      continue;
+    }
     if (m && name !== undefined && KNOWN_FLAGS.has(name)) {
       flags.add(name);
       continue;
     }
     rest.push(tok);
   }
-  return { flags, rest };
+  return { flags, rest, modelFlag };
 }
 
 /** Matches a token that *looks* like a level (first 3 chars + any suffix). */
@@ -80,14 +90,14 @@ function asLevel(token: string): Level | undefined {
 
 export function parseCommand(raw: string): CommandInvocation {
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
-  const { flags, rest } = scanFlags(tokens);
+  const { flags, rest, modelFlag } = scanFlags(tokens);
 
-  // `using <provider/model>` (or `using default`) — wherever it appears.
-  let modelPin: string | undefined;
+  // `using <provider/model>` (or `using default|auto`) — wherever it appears.
+  let usingPin: string | undefined;
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     if (rest[i].toLowerCase() === "using" && rest[i + 1] !== undefined) {
-      modelPin = rest[i + 1].replaceAll("`", "").replaceAll("'", "").replaceAll('"', "");
+      usingPin = rest[i + 1].replaceAll("`", "").replaceAll("'", "").replaceAll('"', "");
       i++;
       continue;
     }
@@ -97,6 +107,9 @@ export function parseCommand(raw: string): CommandInvocation {
   const comment = flags.has("comment");
   const fix = flags.has("fix");
   const post = flags.has("post") && !flags.has("no_post");
+
+  // Explicit --model outranks `using` when both are typed.
+  const modelPin = modelFlag ?? usingPin;
 
   const head = positional[0] ?? "";
 

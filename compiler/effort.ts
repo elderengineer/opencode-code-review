@@ -34,13 +34,17 @@ export function rememberLevel(level: Level): void {
 }
 
 /**
- * Sticky fleet model pin from `using <provider/model>` (`using default`
- * clears it). The pin binds when the plugin next loads — agents are injected
- * at startup, so a fresh pin needs an opencode restart to take effect.
+ * Sticky fleet model pin from `using <provider/model>` / `--model <value>`
+ * (`default` clears it, `auto` routes to the cheapest favorite). The pin
+ * binds when the plugin next loads — agents are injected at startup, so a
+ * fresh pin needs an opencode restart to take effect.
  */
+export const MODEL_AUTO = "auto";
+
 export function rememberedModel(): string | undefined {
   try {
     const stored = readFileSync(MODEL_FILE, "utf8").trim();
+    if (stored === MODEL_AUTO) return MODEL_AUTO;
     return MODEL_REF_RE.test(stored) ? stored : undefined;
   } catch {
     return undefined;

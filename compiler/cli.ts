@@ -11,6 +11,7 @@ import { composeReview, reviewerFor } from "./prompt.ts";
 import { composeCell } from "./cells.ts";
 import { LEVELS } from "./fragments.ts";
 import { EMPTY_BUNDLE } from "./lenses.ts";
+import { resolveAutoLadder, setActiveLadder } from "./route.ts";
 
 const argv = process.argv.slice(2);
 
@@ -31,7 +32,25 @@ if (argv.includes("--cells")) {
 }
 
 const worktree = argValue("--worktree");
-const positional = argv.filter((a, i) => a !== "--worktree" && argv[i - 1] !== "--worktree");
+const server = argValue("--server");
+
+// With --server <url>, an active `auto` pin resolves the favorite ladder from
+// that opencode server, exactly as the plugin does at startup.
+if (server !== undefined) {
+  const ladder = await resolveAutoLadder(server);
+  setActiveLadder(ladder);
+  if (ladder === undefined) process.stderr.write("no usable favorite ladder resolved\n");
+  else
+    for (const [i, e] of ladder.entries())
+      process.stderr.write(`ladder ${i + 1}: ${e.route.providerID}/${e.route.modelID} (effective $${e.effective.toFixed(4)}/Mtok${e.pot ? ", plan pot" : ""})\n`);
+}
+
+const positional = argv.filter(
+  (a, i) =>
+    (a !== "--worktree" && a !== "--server") &&
+    argv[i - 1] !== "--worktree" &&
+    argv[i - 1] !== "--server",
+);
 
 const result = await composeReview(positional.join(" "), worktree ? { worktree } : {});
 process.stdout.write(result.prompt);

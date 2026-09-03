@@ -1,8 +1,9 @@
 import type { Level } from "./fragments.ts";
 import { parseCommand, pickLevel, MODEL_REF_RE, type CommandInvocation } from "./args.ts";
-import { rememberedLevel, rememberLevel, rememberedModel, rememberModel } from "./effort.ts";
+import { rememberedLevel, rememberLevel, rememberedModel, rememberModel, MODEL_AUTO } from "./effort.ts";
 import { diffDigest, fleetHint } from "./budget.ts";
 import { collectLenses } from "./lenses.ts";
+import { activeLadder, type LadderEntry } from "./route.ts";
 import { composeCell } from "./cells.ts";
 import { buildPreamble } from "./preamble.ts";
 import { githubCommentAppendix, gitlabCommentAppendix, fixAppendix } from "./appendices.ts";
@@ -16,11 +17,19 @@ import { githubCommentAppendix, gitlabCommentAppendix, fixAppendix } from "./app
 /** The injected subagent that runs finders/verifiers/sweep at this level. */
 export const reviewerFor = (level: Level): string => `reviewer-${level}`;
 
+/** Alternate subagent names injected for the auto ladder, in cost order. */
+export const fallbackReviewers = (level: Level, ladder: LadderEntry[] | undefined): string[] =>
+  ladder !== undefined && ladder.length > 1
+    ? ladder.slice(1).map((_, i) => `${reviewerFor(level)}-alt${i + 1}`)
+    : [];
+
 export interface CompileResult {
   prompt: string;
   invocation: CommandInvocation;
   level: Level;
   fleetBudget: number | undefined;
+  /** Resolved auto ladder when the active pin is `auto`, else undefined. */
+  autoLadder: LadderEntry[] | undefined;
 }
 
 function isGitLabTarget(targetHead: string): boolean {
@@ -44,22 +53,24 @@ export async function composeReview(rawArguments: string, options: CompileOption
     rememberLevel(args.level);
   }
 
-  // `using` pin: persist valid refs (or clear on `default`), then read back
-  // the active pin for the preamble.
+  // `using`/`--model` pin: persist valid refs (`default` clears, `auto`
+  // routes), then read back the active pin for the preamble.
   if (options.remember !== false && args.modelPin !== undefined) {
-    if (args.modelPin === "default" || MODEL_REF_RE.test(args.modelPin)) {
+    if (args.modelPin === "default" || args.modelPin === MODEL_AUTO || MODEL_REF_RE.test(args.modelPin)) {
       rememberModel(args.modelPin === "default" ? undefined : args.modelPin);
     }
   }
   const pinnedModel = rememberedModel();
+  const autoLadder = pinnedModel === MODEL_AUTO ? activeLadder() : undefined;
+  const fallbacks = fallbackReviewers(level, autoLadder);
 
   // One sandboxed git call feeds both the fleet hint and lens gating.
   const digest = await diffDigest(args.target, worktree);
   const [lenses, hint] = [await collectLenses(worktree, digest), fleetHint(level, args.target, digest)];
 
-  const preamble = buildPreamble({ args, remembered, level, pinnedModel });
+  const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder });
   const targetClause = args.target ? `Review target: \`${args.target}\`\n\n` : "";
-  const cell = composeCell({ level, reviewer: reviewerFor(level), lenses });
+  const cell = composeCell({ level, reviewer: reviewerFor(level), lenses, fallbacks });
 
   const targetHead = args.target.split(/\s+/)[0] ?? "";
   const commentAppendix = !args.comment
@@ -80,5 +91,6 @@ export async function composeReview(rawArguments: string, options: CompileOption
     invocation: args,
     level,
     fleetBudget: hint.budget,
+    autoLadder,
   };
 }

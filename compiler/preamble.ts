@@ -1,6 +1,8 @@
 import type { Level } from "./fragments.ts";
 import { LEVELS } from "./fragments.ts";
 import { MODEL_REF_RE, type CommandInvocation } from "./args.ts";
+import { MODEL_AUTO } from "./effort.ts";
+import { routeRef, type LadderEntry } from "./route.ts";
 
 /**
  * The preamble: the parenthetical that opens the composed prompt and explains
@@ -16,6 +18,8 @@ export interface PreambleInput {
   level: Level;
   /** Active fleet model pin (state read after the `using` write). */
   pinnedModel: string | undefined;
+  /** Resolved auto ladder when the active pin is `auto`. */
+  autoLadder?: LadderEntry[];
 }
 
 const VALID_LEVELS = LEVELS.join(", ");
@@ -27,10 +31,31 @@ const POST_IGNORED = `(The typed \`--post\` applies only to a cloud review, whic
 
 `;
 
-/** Parenthetical for the `using` pin — typed this run, or active from state. */
-export function modelPinNote({ args, pinnedModel }: PreambleInput): string {
+/** Parenthetical for the `using`/`--model` pin — typed this run, or active from state. */
+export function modelPinNote({ args, pinnedModel, autoLadder }: PreambleInput): string {
+  const autoActiveNote = () => {
+    if (autoLadder !== undefined && autoLadder.length > 0) {
+      const [primary, ...alts] = autoLadder;
+      const chain = alts.length > 0
+        ? ` On model-shaped failures (quota, credits, rate limits) the reviewers fall back to ${alts.map((e) => `\`${routeRef(e.route)}\``).join(", ")}, in that order.`
+        : "";
+      return `(Fleet model: auto — reviewers run on \`${routeRef(primary.route)}\`, the cheapest of the user's favorite models${primary.pot ? " (plan pot, priced at its cheapest cash rate)" : ""}.${chain} \`using default\` clears it.)\n\n`;
+    }
+    return `(Fleet model: auto, but no usable favorite ladder was resolved — reviewers inherit the session model. Check that favorites exist in the TUI model picker and that their providers are connected.)\n\n`;
+  };
+
   if (args.modelPin === "default") {
     return `(\`using default\` cleared the fleet model pin — reviewers inherit the session model once the plugin next loads; restart opencode to apply.)
+
+`;
+  }
+  // Typed this run and already live (pin survived a previous invocation):
+  // report the active route rather than "queued for restart".
+  if (args.modelPin === MODEL_AUTO && pinnedModel === MODEL_AUTO) {
+    return autoActiveNote();
+  }
+  if (args.modelPin === MODEL_AUTO) {
+    return `(Auto routing queued — the fleet will run on the cheapest of the user's favorite models, with the rest as cost-ordered fallbacks. It binds when the plugin next loads; restart opencode to apply. \`using default\` clears it.)
 
 `;
   }
@@ -40,9 +65,12 @@ export function modelPinNote({ args, pinnedModel }: PreambleInput): string {
 
 `;
     }
-    return `(Ignoring unrecognized model pin "${args.modelPin}"; expected \`provider/model\` or \`default\`.)
+    return `(Ignoring unrecognized model pin "${args.modelPin}"; expected \`provider/model\`, \`auto\`, or \`default\`.)
 
 `;
+  }
+  if (pinnedModel === MODEL_AUTO) {
+    return autoActiveNote();
   }
   if (pinnedModel !== undefined) {
     return `(The fleet model is pinned to \`${pinnedModel}\` from a previous \`using\`; \`using default\` clears it.)

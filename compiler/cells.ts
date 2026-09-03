@@ -3,6 +3,7 @@ import {
   PHASE_0_GATHER_DIFF,
   TASK_TOOL,
   SPAWN_FALLBACK_NOTE,
+  MODEL_FALLBACK_CLAUSE,
   LENS_SET_BY_LEVEL,
   CLEANUP_FINDING_CONTRACT,
   PHASE_2_VERIFY_3STATE,
@@ -35,6 +36,11 @@ export interface CellInput {
   /** reviewer-<level> subagent name, spawned for finders/verifiers/sweep. */
   reviewer: string;
   lenses: LensBundle;
+  /**
+   * Alternate reviewer subagent names (cost order) when the fleet is
+   * auto-routed — empty/undefined when a model is pinned or inherited.
+   */
+  fallbacks?: string[];
 }
 
 // --- lead-ins ---------------------------------------------------------------
@@ -89,7 +95,7 @@ qualifies, output exactly \`(none)\`.`;
 
 // --- medium / high / max: finder fleet + verify (+ sweep at max) -------------
 
-function fleetCell({ level, reviewer, lenses }: CellInput): string {
+function fleetCell({ level, reviewer, lenses, fallbacks }: CellInput): string {
   const wide = level === "max";
   const builtIns = wide ? 10 : 8;
   const perLensCap = wide ? 8 : 6;
@@ -126,6 +132,10 @@ record both. ${batchNote} ${SPAWN_FALLBACK_NOTE}`
 surfaces **up to ${perLensCap} candidate findings** with \`file\`, \`line\`, a one-line
 \`summary\`, and a concrete \`failure_scenario\`. ${batchNote} ${SPAWN_FALLBACK_NOTE}`;
 
+  const fallbackBlock = fallbacks && fallbacks.length > 0
+    ? MODEL_FALLBACK_CLAUSE(reviewer, fallbacks) + "\n"
+    : "";
+
   const verify = level === "medium"
     ? PHASE_2_VERIFY_3STATE(reviewer)
     : PHASE_2_VERIFY_RECALL(reviewer);
@@ -155,7 +165,7 @@ ${heading}
 
 ${finderBrief}
 
-${lensTexts}
+${fallbackBlock}${lensTexts}
 ${CLEANUP_FINDING_CONTRACT}
 ${passThrough}${verify}
 ${recallCarry}${wide ? PHASE_3_SWEEP(reviewer) : ""}
