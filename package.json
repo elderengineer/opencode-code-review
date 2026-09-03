@@ -1,6 +1,6 @@
 {
   "name": "@elderengineer/opencode-code-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "/code-review max --fix for opencode — parallel finder lenses, 1-vote verification, project lenses, effort from low to max.",
   "type": "module",
   "main": "plugin.ts",
