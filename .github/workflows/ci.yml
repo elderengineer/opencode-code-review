@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun test/verify.ts
+      - name: Compiler smoke test
+        run: bun compiler/cli.ts --cells > /dev/null && bun compiler/cli.ts medium --fix --worktree . > /dev/null

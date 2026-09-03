@@ -15,13 +15,13 @@ as a deterministic prompt. The model only executes the compiled instructions.
 **From npm** (recommended):
 
 ```bash
-bun add opencode-code-review
+bun add @elderengineer/opencode-code-review
 ```
 
 Register the package in `~/.config/opencode/opencode.json`:
 
 ```json
-{ "plugin": ["opencode-code-review"] }
+{ "plugin": ["@elderengineer/opencode-code-review"] }
 ```
 
 **From source** — clone or copy this folder:
