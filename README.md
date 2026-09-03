@@ -11,13 +11,25 @@ as a deterministic prompt. The model only executes the compiled instructions.
 
 ## Install
 
-**Global** (all projects) — from this folder:
+**From npm** (recommended):
+
+```bash
+bun add opencode-code-review
+```
+
+Register the package in `~/.config/opencode/opencode.json`:
+
+```json
+{ "plugin": ["opencode-code-review"] }
+```
+
+**From source** — clone or copy this folder:
 
 ```bash
 cp -r . ~/.config/opencode/opencode-code-review
 ```
 
-Register in `~/.config/opencode/opencode.json`:
+Register the local path in `~/.config/opencode/opencode.json`:
 
 ```json
 { "plugin": ["./opencode-code-review/plugin.ts"] }

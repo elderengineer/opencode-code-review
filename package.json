@@ -5,6 +5,18 @@
   "type": "module",
   "main": "plugin.ts",
   "oc-plugin": ["server"],
+  "files": [
+    "plugin.ts",
+    "compiler",
+    "prompts",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elderengineer/opencode-code-review.git"
+  },
+  "homepage": "https://github.com/elderengineer/opencode-code-review#readme",
+  "bugs": "https://github.com/elderengineer/opencode-code-review/issues",
   "keywords": [
     "opencode",
     "opencode-plugin",
