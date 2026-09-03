@@ -1,0 +1,28 @@
+{
+  "name": "opencode-code-review",
+  "version": "0.1.0",
+  "description": "Effort-routed multi-lens code review for opencode: parallel finder lenses, 1-vote verification, gap sweep, project lenses, and sticky effort.",
+  "type": "module",
+  "main": "plugin.ts",
+  "oc-plugin": ["server"],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "code-review",
+    "review",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "bun test/verify.ts",
+    "cells": "bun compiler/cli.ts --cells"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.15.0",
+    "zod": ">=4.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.15.5",
+    "zod": "4.1.8"
+  }
+}

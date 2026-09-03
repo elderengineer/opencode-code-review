@@ -1,21 +1,22 @@
 # AGENTS.md
 
-opencode plugin (TypeScript, run by Bun) that injects `/code-review` + `/review`
-commands, a `code_review_prompt` tool, and five hidden `reviewer-<level>`
-subagents into opencode. All workflow logic is compiled deterministically in
-`compiler/`; the model only executes the compiled prompt.
+opencode plugin (TypeScript, run by Bun) that injects `/code-review` +
+`/code-review:create-lens` commands, a `code_review_prompt` tool, and four
+hidden `reviewer-<level>` subagents into opencode. All workflow logic is
+compiled deterministically in `compiler/`; the model only executes the
+compiled prompt.
 
 ## Verify your changes
 
 ```bash
-bun test/verify.ts              # 62-assertion behavioral suite (hand-rolled check(); exits non-zero on failure)
-bun compiler/cli.ts --cells     # dump the 5 level cells as JSON — byte-stable snapshot reference
+bun test/verify.ts              # 87-assertion behavioral suite (hand-rolled check(); exits non-zero on failure)
+bun compiler/cli.ts --cells     # dump the 4 level cells as JSON — byte-stable snapshot reference
 bun compiler/cli.ts high --fix  # inspect a composed prompt (add --worktree <dir> to compose against a repo)
 ```
 
 `bun test` also works (`npm test` / `npm run cells` are wired up). Run verify
 after **any** compiler change — tests assert exact substrings of the composed
-prompts (e.g. `8 independent finder angles`, `≤8 findings`,
+prompts (e.g. `8 independent finders`, `≤8 findings`,
 `Phase 3 — Sweep for gaps`), so rewording fragments breaks them. The sticky-level
 test reads/writes the real `~/.local/state/opencode/code-review-level` file and
 restores it; don't "fix" that.
@@ -36,16 +37,24 @@ installed copy — it gets overwritten by the next sync.
   `{ id, server }` (+ default export). Injects commands/agents via the `config`
   hook, the tool via `tool:`. Merge is user-wins: a project's existing
   `command`/`agent` entry of the same name overrides injected defaults.
+  Prompt prose lives in `prompts/*.md` (loaded at startup; minimal fallbacks
+  keep the plugin alive if a file is missing) — keep structure (models,
+  variants, tools) in TS and prose in the .md files.
 - `compiler/prompt.ts` — `composeReview()`, the single compile entry:
   parse args → sticky level → one sandboxed `git diff --numstat`
   (`budget.ts`, feeds both fleet hint and lens gating) → lenses → cell →
   `--comment`/`--fix` appendices.
-- `compiler/fragments.ts` — all prompt text lives here as exported constants.
-  Keep the `PHASE_0_GATHER_DIFF` / `PHASE_2_VERIFY_*` / `PHASE_3_SWEEP` names;
-  fragment texts must stay byte-stable (probed via `--cells` output).
-- `compiler/lenses.ts` — project lenses: `<repo>/.opencode/code-review/lenses/<slug>.md`,
-  frontmatter `paths:` gating. Slug semantics (replace code lens / replace an
-  angle / prepend everywhere + specialist finder) are documented in README.
+- `compiler/fragments.ts` — the phase/output prompt text lives here as exported
+  constants (built-in lens text lives in `prompts/lenses/<name>.md`, loaded at
+  import). Keep the `PHASE_0_GATHER_DIFF` / `PHASE_2_VERIFY_*` /
+  `PHASE_3_SWEEP` names; fragment texts must stay byte-stable (probed via
+  `--cells` output).
+- `compiler/lenses.ts` — project lenses: `<repo>/.opencode/code-review/lenses/<name>.md`,
+  frontmatter `paths:` gating + `model:`/`variant:` pins (the plugin injects a
+  `reviewer-lens-<name>` agent per project lens at startup). Naming rule: a
+  lens named after a built-in lens replaces it; any other name adds a project
+  perspective + specialist finder. Vocabulary is "lens" everywhere — never
+  "angle" or "slug".
 
 ## Hard constraints
 
