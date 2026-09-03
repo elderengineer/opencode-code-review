@@ -1,6 +1,7 @@
 # opencode-code-review
 
-Effort-routed, multi-lens code review for [opencode](https://opencode.ai).
+`/code-review max --fix` for [opencode](https://opencode.ai) — parallel finder
+lenses, 1-vote verification, project lenses, effort from low to max.
 Type `/code-review` and the plugin compiles a review workflow — parallel finder
 subagents, a 1-vote verification pass, an optional gap sweep, project lenses —
 as a deterministic prompt. The model only executes the compiled instructions.
