@@ -47,10 +47,11 @@ jobs:
             range="${prev_tag:+"$prev_tag.."}$GITHUB_REF_NAME"
             git log "$range" --format=%s > subjects.txt
 
-            features="" fixes="" maint="" other=""
-            while IFS= read -r subject; do
-              [ -z "$subject" ] && continue
-              if [[ $subject =~ ^(feat|fix|docs|perf|refactor|test|chore)(\([^)]*\))?:[[:space:]]+(.+)$ ]]; then
+          features="" fixes="" maint="" other=""
+          re='^(feat|fix|docs|perf|refactor|test|chore)(\([^)]*\))?:[[:space:]]+(.+)$'
+          while IFS= read -r subject; do
+            [ -z "$subject" ] && continue
+            if [[ $subject =~ $re ]]; then
                 entry="- ${BASH_REMATCH[3]}"
                 case ${BASH_REMATCH[1]} in
                   feat) features+="$entry"$'\n' ;;
