@@ -152,6 +152,24 @@ update command. It talks only to `registry.npmjs.org` and `api.github.com`
 (read-only; nothing is sent), prompts once per version, and is disabled by
 setting `CODE_REVIEW_NO_UPDATE_CHECK`.
 
+## Salvaging interrupted reviews
+
+When a review dies (wall-clock timeout, crash), most of its output survives in
+the child subagent sessions inside opencode's local database. The salvager
+recovers it read-only:
+
+```bash
+bun compiler/salvage.ts <parentSessionId> --out findings.partial.json
+```
+
+The parent session id comes from your run's event log or opencode's session
+list. The report contains, per reviewer child, the assembled assistant text
+plus any fenced JSON findings it emitted; children that died before producing
+text are listed as skipped. The database is opened read-only and nothing is
+written to it. Wire the command into your runner's timeout branch, then merge,
+dedupe, and cap the extracted findings into your report — they are partial
+results, never a completed review.
+
 **Scope:** the diff under review is `git diff @{upstream}...HEAD` (or
 `main...HEAD` / `HEAD~1`) **plus working-tree changes** (`git diff HEAD`).
 Untracked files that were never `git add`ed are invisible to every diff —
