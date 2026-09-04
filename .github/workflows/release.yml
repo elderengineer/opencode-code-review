@@ -12,6 +12,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -23,7 +26,34 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
       - run: npm publish --provenance
-      - name: GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+      - name: Build release notes from commit subjects
+        run: |
+          prev_tag=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          range="${prev_tag:+"$prev_tag.."}$GITHUB_REF_NAME"
+          git log "$range" --format=%s > subjects.txt
+
+          features="" fixes="" maint="" other=""
+          while IFS= read -r subject; do
+            [ -z "$subject" ] && continue
+            if [[ $subject =~ ^(feat|fix|docs|perf|refactor|test|chore)(\([^)]*\))?:[[:space:]]+(.+)$ ]]; then
+              entry="- ${BASH_REMATCH[3]}"
+              case ${BASH_REMATCH[1]} in
+                feat) features+="$entry"$'\n' ;;
+                fix)  fixes+="$entry"$'\n' ;;
+                *)    maint+="$entry"$'\n' ;;
+              esac
+            else
+              other+="- $subject"$'\n'
+            fi
+          done < subjects.txt
+
+          {
+            [ -n "$features" ] && { echo "## ✨ New features"; echo; printf '%s' "$features"; echo; }
+            [ -n "$fixes" ] && { echo "## 🐛 Fixes"; echo; printf '%s' "$fixes"; echo; }
+            [ -n "$maint$other" ] && { echo "## 📝 Other changes"; echo; printf '%s' "$maint$other"; echo; }
+            echo "Install / update: \`npm install @elderengineer/opencode-code-review@latest\` — restart opencode."
+          } > body.md
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file body.md
