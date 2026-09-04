@@ -31,6 +31,15 @@ After changing source: copy the changed files over the installed copy, then
 restart opencode (plugins/commands load at startup only). Never edit only the
 installed copy — it gets overwritten by the next sync.
 
+## Commit messages
+
+Conventional Commits, one line: `type: description` — types `feat`, `fix`,
+`docs`, `perf`, `refactor`, `test`, `chore`; scope optional (`feat(lenses): …`).
+Write the description for **users**: the first line is extracted verbatim into
+release notes by `release.yml` at tag time. With squash merges the PR title is
+the commit subject, and the `Semantic PR` workflow rejects non-conforming
+titles. Non-conforming subjects still render, under "Other changes".
+
 ## Layout
 
 - `plugin.ts` — plugin entry; this opencode version requires module shape
