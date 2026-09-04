@@ -12,7 +12,7 @@ import { composeCell } from "../compiler/cells.ts";
 import { collectLenses, readLensPins, swapLensTexts, EMPTY_BUNDLE } from "../compiler/lenses.ts";
 import { composeReview, reviewerFor } from "../compiler/prompt.ts";
 import { buildPreamble } from "../compiler/preamble.ts";
-import { diffDigest, decodeGitPath } from "../compiler/budget.ts";
+import { diffDigest, decodeGitPath, heavyShapeNote } from "../compiler/budget.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
 import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES } from "../compiler/fragments.ts";
 import {
@@ -267,6 +267,38 @@ function check(name: string, cond: boolean) {
   rmSync(dir, { recursive: true, force: true });
   check("git C-quoted path decoded", decodeGitPath('"mobile/\\346\\226\\207\\346\\241\\243.kt"') === "mobile/文档.kt");
   check("rename collapsed to new path", decodeGitPath("old/{a => b}/c.txt") === "old/b/c.txt" && decodeGitPath("a.txt => b.txt") === "b.txt");
+}
+
+// --- heavy shape note --------------------------------------------------------------
+
+{
+  console.log("heavy shape note");
+  const big = { lines: 1344, files: ["docs/plan/tla.md", "src/x.ts"] };
+  check("silent at low", heavyShapeNote("low", big, 4, "") === "");
+  check("silent without digest", heavyShapeNote("medium", undefined, 4, "") === "");
+  check("silent on small diff", heavyShapeNote("medium", { lines: 300, files: ["a.ts"] }, 4, "") === "");
+  check("silent with one lens on mid diff", heavyShapeNote("medium", { lines: 900, files: ["a.ts"] }, 1, "") === "");
+  const fired = heavyShapeNote("medium", big, 4, "");
+  check("fires on many lenses + large diff", fired.includes("Heavy review shape") && fired.includes("4 project lenses"));
+  check("fires on very large diff alone", heavyShapeNote("high", { lines: 3000, files: ["a.ts"] }, 0, "").includes("Heavy review shape"));
+  check("unscoped target advises narrower target", fired.includes("narrower target"));
+  check("path target drops the advice", !heavyShapeNote("medium", big, 4, "src/main").includes("narrower target"));
+  check("range target keeps the advice", heavyShapeNote("medium", big, 4, "main...HEAD").includes("narrower target"));
+
+  // End-to-end: a >2500-line committed diff trips the note through composeReview.
+  const dir = mkdtempSync(join(tmpdir(), "ocr-heavy-"));
+  const git = (args: string[]) =>
+    spawnSync("git", ["-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", ...args], { stdio: "ignore" });
+  git(["init", "-q"]);
+  writeFileSync(join(dir, "big.txt"), Array.from({ length: 2600 }, (_, i) => `line ${i}`).join("\n") + "\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "one"]);
+  writeFileSync(join(dir, "big.txt"), "changed\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "two"]);
+  const result = await composeReview("medium", { worktree: dir, remember: false });
+  check("composeReview includes the note", result.prompt.includes("Heavy review shape"));
+  rmSync(dir, { recursive: true, force: true });
 }
 
 // --- gitlab MR ref in --comment appendix -------------------------------------------

@@ -138,3 +138,35 @@ export function fleetHint(level: string, target: string, digest: DiffDigest | un
     budget,
   };
 }
+
+/**
+ * Advisory heads-up for a heavy review shape — a large diff multiplied by
+ * active project lenses (each specialist re-reads the whole diff and adds
+ * candidates to verify) can run long against the session's wall clock.
+ * Fires at every fleet level: the observed timeout was a medium run.
+ * Purely informational — fleet size itself is fixed by level.
+ */
+
+const HEAVY_LENS_LINES = 800;
+const HEAVY_BARE_LINES = 2500;
+
+export function heavyShapeNote(
+  level: string,
+  digest: DiffDigest | undefined,
+  specialists: number,
+  target: string,
+): string {
+  if (level === "low" || digest === undefined) return "";
+  const heavy = (specialists >= 2 && digest.lines >= HEAVY_LENS_LINES) || digest.lines >= HEAVY_BARE_LINES;
+  if (!heavy) return "";
+
+  // A path target is already a deliberate scope; a range target (a..b) is not.
+  const scoped = target !== "" && !target.includes("..");
+  const advice = scoped
+    ? ""
+    : " If they want it faster, a narrower target — for example a path — shrinks the diff and deactivates lenses outside it.";
+  const lensNote = specialists > 0
+    ? ` with ${specialists} project lens${specialists === 1 ? "" : "es"} active`
+    : "";
+  return `(Heavy review shape — tell the user in one short line as you begin: about ${digest.lines} changed lines${lensNote}, so this review may run long.${advice})\n\n`;
+}

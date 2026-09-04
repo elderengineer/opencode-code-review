@@ -203,7 +203,9 @@ You are reviewing the Android app (Kotlin, Compose, coroutines)…
   rate-limit rejection the orchestrator waits, re-issues, and halves its
   in-flight subagents until the provider recovers; a repeat failure on the same
   spawn falls back to inline sequential work, so congestion degrades the review
-  instead of aborting it.
+  instead of aborting it. A heavy shape — a large diff multiplied by active
+  project lenses — adds a one-line heads-up to the review prompt suggesting a
+  narrower target, which also deactivates lenses outside it.
 - Every new-name project lens (not a built-in replacement) gets its own
   `reviewer-lens-<name>` finder agent, registered at plugin load with its
   `model:`/`variant:` pins (restart after adding one; lens text and `paths:`
