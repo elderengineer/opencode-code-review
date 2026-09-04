@@ -1,0 +1,25 @@
+name: Release please
+
+# Watches master: when conventional commits warrant a release, opens/updates
+# a release PR that bumps package.json. Merging it tags the version and
+# creates the GitHub release — the tag then triggers release.yml (tests +
+# npm publish). Needs a classic PAT with repo scope as the RELEASE_PAT
+# secret: tags pushed with the default GITHUB_TOKEN do not trigger
+# release.yml.
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+          manifest-file: .release-please-manifest.json
+          config-file: release-please-config.json

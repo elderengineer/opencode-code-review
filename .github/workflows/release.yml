@@ -26,34 +26,47 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
       - run: npm publish --provenance
-      - name: Build release notes from commit subjects
+      - name: Guard — tag must match package.json
         run: |
-          prev_tag=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
-          range="${prev_tag:+"$prev_tag.."}$GITHUB_REF_NAME"
-          git log "$range" --format=%s > subjects.txt
-
-          features="" fixes="" maint="" other=""
-          while IFS= read -r subject; do
-            [ -z "$subject" ] && continue
-            if [[ $subject =~ ^(feat|fix|docs|perf|refactor|test|chore)(\([^)]*\))?:[[:space:]]+(.+)$ ]]; then
-              entry="- ${BASH_REMATCH[3]}"
-              case ${BASH_REMATCH[1]} in
-                feat) features+="$entry"$'\n' ;;
-                fix)  fixes+="$entry"$'\n' ;;
-                *)    maint+="$entry"$'\n' ;;
-              esac
-            else
-              other+="- $subject"$'\n'
-            fi
-          done < subjects.txt
-
-          {
-            [ -n "$features" ] && { echo "## ✨ New features"; echo; printf '%s' "$features"; echo; }
-            [ -n "$fixes" ] && { echo "## 🐛 Fixes"; echo; printf '%s' "$fixes"; echo; }
-            [ -n "$maint$other" ] && { echo "## 📝 Other changes"; echo; printf '%s' "$maint$other"; echo; }
-            echo "Install / update: \`npm install @elderengineer/opencode-code-review@latest\` — restart opencode."
-          } > body.md
-      - name: Create GitHub release
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$pkg_version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${pkg_version} — bump package.json and re-tag."
+            exit 1
+          fi
+      - name: Release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file body.md
+        run: |
+          footer="Install / update: \`npm install @elderengineer/opencode-code-review@latest\` — restart opencode."
+          if gh release view "$GITHUB_REF_NAME" --json body -q .body > release-body.md 2>/dev/null; then
+            # release-please already created the release — append the footer
+            { cat release-body.md; echo; echo "$footer"; } > body.md
+            gh release edit "$GITHUB_REF_NAME" --notes-file body.md
+          else
+            prev_tag=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+            range="${prev_tag:+"$prev_tag.."}$GITHUB_REF_NAME"
+            git log "$range" --format=%s > subjects.txt
+
+            features="" fixes="" maint="" other=""
+            while IFS= read -r subject; do
+              [ -z "$subject" ] && continue
+              if [[ $subject =~ ^(feat|fix|docs|perf|refactor|test|chore)(\([^)]*\))?:[[:space:]]+(.+)$ ]]; then
+                entry="- ${BASH_REMATCH[3]}"
+                case ${BASH_REMATCH[1]} in
+                  feat) features+="$entry"$'\n' ;;
+                  fix)  fixes+="$entry"$'\n' ;;
+                  *)    maint+="$entry"$'\n' ;;
+                esac
+              else
+                other+="- $subject"$'\n'
+              fi
+            done < subjects.txt
+
+            {
+              [ -n "$features" ] && { echo "## ✨ New features"; echo; printf '%s' "$features"; echo; }
+              [ -n "$fixes" ] && { echo "## 🐛 Fixes"; echo; printf '%s' "$fixes"; echo; }
+              [ -n "$maint$other" ] && { echo "## 📝 Other changes"; echo; printf '%s' "$maint$other"; echo; }
+              echo "$footer"
+            } > body.md
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file body.md
+          fi
