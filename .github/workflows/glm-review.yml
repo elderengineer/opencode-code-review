@@ -1,0 +1,87 @@
+name: GLM review
+
+# Posts a GLM review of the PR diff as a comment. Requires a repo secret
+# ZAI_API_KEY (a Z.AI API key — the coding-plan subscription itself is not
+# usable from Actions); without it the job exits early and quietly.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: glm-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    env:
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      ZAI_BASE_URL: ${{ vars.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4' }}
+      ZAI_MODEL: ${{ vars.ZAI_MODEL || 'glm-5.3-flash' }}
+      REPO: ${{ github.repository }}
+      NUMBER: ${{ github.event.pull_request.number }}
+      MARKER: "<!-- glm-review -->"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review the PR diff with GLM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$ZAI_API_KEY" ]; then
+            echo "ZAI_API_KEY secret not set — GLM review skipped."
+            exit 0
+          fi
+
+          # Full PR diff against the base, capped to keep the prompt bounded.
+          diff_text=$(gh pr diff "$NUMBER" --repo "$REPO" | head -c 120000)
+          if [ -z "$diff_text" ]; then
+            echo "Empty diff — nothing to review."
+            exit 0
+          fi
+
+          system_prompt='You are a rigorous code reviewer for a TypeScript CLI plugin. Review the diff for real bugs, security issues, broken invariants, and missing test coverage. Ignore style, formatting, and naming. Reply with at most 10 short bullets, each as "file:line — issue — why it matters", most severe first. If nothing qualifies, reply exactly: No issues found.'
+
+          jq -n --arg model "$ZAI_MODEL" --arg sys "$system_prompt" --arg diff "$diff_text" '{
+            model: $model,
+            temperature: 0.2,
+            messages: [
+              { role: "system", content: $sys },
+              { role: "user", content: ("Review this pull request diff.\n\n" + $diff) }
+            ]
+          }' > payload.json
+
+          if ! response=$(curl -s --max-time 180 "$ZAI_BASE_URL/chat/completions" \
+              -H "Authorization: Bearer $ZAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data @payload.json); then
+            echo "GLM request failed." >&2
+            exit 1
+          fi
+          content=$(echo "$response" | jq -r '.choices[0].message.content // empty')
+          if [ -z "$content" ] || [ "$content" = "null" ]; then
+            echo "GLM returned no content: $response" >&2
+            exit 1
+          fi
+
+          body="$MARKER
+          ## 🤖 GLM review
+
+          $content"
+
+          comment_id=$(gh api "repos/$REPO/issues/$NUMBER/comments" \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
+            echo "Updated existing GLM review comment."
+          else
+            gh pr comment "$NUMBER" --repo "$REPO" --body "$body" > /dev/null
+            echo "Posted GLM review comment."
+          fi
