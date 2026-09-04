@@ -93,8 +93,11 @@ export function buildPreamble(input: PreambleInput): string {
       : `(${msg})
 
 `;
-  } else if (remembered !== undefined) {
-    const msg = `No effort level given — reusing ${remembered}, the level the user typed last time${level !== remembered ? `; running at ${level} here` : ""}.`;
+  } else if (args.level === undefined && remembered !== undefined) {
+    // Reachable only when nothing was typed; pickLevel then guarantees
+    // level === remembered, so the message cannot name a level other than
+    // the one actually being run.
+    const msg = `No effort level given — reusing ${remembered}, the level the user typed last time.`;
     body = `(${msg} Tell the user this in one short line as you begin, including that ${HOW_TO_CHANGE}.)
 
 `;
