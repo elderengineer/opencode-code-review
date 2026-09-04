@@ -296,14 +296,15 @@ function check(name: string, cond: boolean) {
   check("medium: precise rubric", medium.includes("CONFIRMED") && medium.includes("PLAUSIBLE by default") === false);
   check("medium: cap 8", medium.includes("≤8 findings"));
   check("medium: no sweep", !medium.includes("Phase 3"));
-  check("medium: finder retry on failed spawn", medium.includes("retry") && medium.includes("rate limit"));
-  check("medium: verifier retry on failed spawn", medium.includes("retry that same subagent once"));
-  check("medium: spawn batch size max(5, half fleet)", medium.includes("waves of at most 5 concurrent task calls"));
+  check("medium: unthrottled spawn protocol", medium.includes("no concurrency cap"));
+  check("medium: halve in-flight on congestion", medium.includes("half as many spawns in flight") && medium.includes("429"));
+  check("medium: inline fallback on repeated congestion", medium.includes("run that lens or verification") && medium.includes("sequentially"));
+  check("medium: no spawn wave cap", !medium.includes("waves of at most"));
 
   const high = cell("high");
   check("high: recall rubric", high.includes("PLAUSIBLE by default"));
   check("high: cap 10", high.includes("≤10 findings"));
-  check("high: verifier retry on failed spawn", high.includes("retry that same subagent once"));
+  check("high: halve in-flight on congestion", high.includes("half as many spawns in flight") && high.includes("429"));
 
   const max = cell("max");
   check("max: extended set (language-pitfalls)", max.includes("Language-pitfall specialist"));
@@ -312,8 +313,8 @@ function check(name: string, cond: boolean) {
   check("max: cap 15", max.includes("≤15 findings"));
   check("max: names reviewer subagent", max.includes("reviewer-max"));
   check("max: maximum lead-in", max.includes("maximum effort"));
-  check("max: sweep retry on failed spawn", max.includes("retry that same subagent once"));
-  check("max: spawn batch size max(5, half fleet)", max.includes("waves of at most 5 concurrent task calls"));
+  check("max: sweep congestion protocol", max.includes("half as many spawns in flight"));
+  check("max: no spawn wave cap", !max.includes("waves of at most"));
 }
 
 // --- lenses --------------------------------------------------------------------
