@@ -1,7 +1,7 @@
 import type { Level } from "./fragments.ts";
 import { parseCommand, pickLevel, MODEL_REF_RE, type CommandInvocation } from "./args.ts";
 import { rememberedLevel, rememberLevel, rememberedModel, rememberModel, MODEL_AUTO } from "./effort.ts";
-import { diffDigest, fleetHint } from "./budget.ts";
+import { diffDigest, fleetHint, heavyShapeNote } from "./budget.ts";
 import { collectLenses } from "./lenses.ts";
 import { activeLadder, type LadderEntry } from "./route.ts";
 import { composeCell } from "./cells.ts";
@@ -11,7 +11,8 @@ import { githubCommentAppendix, gitlabCommentAppendix, fixAppendix } from "./app
 /**
  * Prompt assembly — the compiler entry point. Order:
  *
- *   preamble → target clause → fleet hint → cell → comment appendix → fix appendix
+ *   preamble → target clause → heavy-shape note → fleet hint → cell →
+ *   comment appendix → fix appendix
  */
 
 /** The injected subagent that runs finders/verifiers/sweep at this level. */
@@ -70,6 +71,7 @@ export async function composeReview(rawArguments: string, options: CompileOption
 
   const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder });
   const targetClause = args.target ? `Review target: \`${args.target}\`\n\n` : "";
+  const shapeNote = heavyShapeNote(level, digest, lenses.specialists.length);
   const cell = composeCell({ level, reviewer: reviewerFor(level), lenses, fallbacks });
 
   const targetHead = args.target.split(/\s+/)[0] ?? "";
@@ -84,6 +86,7 @@ export async function composeReview(rawArguments: string, options: CompileOption
     prompt:
       preamble +
       targetClause +
+      shapeNote +
       hint.text +
       cell +
       commentAppendix +
