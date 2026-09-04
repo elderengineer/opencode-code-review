@@ -13,6 +13,7 @@ import { collectLenses, readLensPins, swapLensTexts, EMPTY_BUNDLE } from "../com
 import { composeReview, reviewerFor } from "../compiler/prompt.ts";
 import { buildPreamble } from "../compiler/preamble.ts";
 import { diffDigest, decodeGitPath, heavyShapeNote } from "../compiler/budget.ts";
+import { cmpVersions, UPDATE_FILE, markNotified, readUpdateNotice } from "../compiler/update.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
 import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES, SPAWN_FALLBACK_NOTE } from "../compiler/fragments.ts";
 import {
@@ -227,16 +228,16 @@ function check(name: string, cond: boolean) {
   rememberModel("auto");
   setActiveLadder(ladderFixture);
   check("activeLadder roundtrip", activeLadder()?.[0].route.providerID === "zai-coding-plan");
-  const autoRun = await composeReview("high using auto", { worktree: composeDir, remember: false });
+  const autoRun = await composeReview("high using auto", { worktree: composeDir, remember: false, updateCheck: false });
   check("auto pin announcement", autoRun.prompt.includes("zai-coding-plan/glm-flash"));
   check("auto run names alternate agents", autoRun.prompt.includes("reviewer-high-alt1"));
   check("auto run keeps primary agent", autoRun.prompt.includes("reviewer-high"));
   check("autoLadder in result", autoRun.autoLadder?.length === 2);
   setActiveLadder(undefined);
-  const noLadder = await composeReview("high using auto", { worktree: composeDir, remember: false });
+  const noLadder = await composeReview("high using auto", { worktree: composeDir, remember: false, updateCheck: false });
   check("no ladder → no alternate agents", !noLadder.prompt.includes("reviewer-high-alt1"));
   check("no ladder → degraded note", noLadder.prompt.includes("no usable favorite ladder"));
-  const nonAuto = await composeReview("high", { worktree: composeDir, remember: false });
+  const nonAuto = await composeReview("high", { worktree: composeDir, remember: false, updateCheck: false });
   check("non-auto run has no fallback machinery", !nonAuto.prompt.includes("Model fallback") && !nonAuto.prompt.includes("reviewer-high-alt1"));
   if (modelBefore === undefined) {
     rmSync(join(process.env.HOME!, ".local/state/opencode/code-review-model"), { force: true });
@@ -296,8 +297,46 @@ const gitRunner = (dir: string) => (args: string[]) =>
   writeFileSync(join(dir, "big.txt"), "changed\n");
   git(["add", "."]);
   git(["commit", "-qm", "two"]);
-  const result = await composeReview("medium", { worktree: dir, remember: false });
+  const result = await composeReview("medium", { worktree: dir, remember: false, updateCheck: false });
   check("composeReview includes the note", result.prompt.includes("Heavy review shape"));
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- update notice -------------------------------------------------------------------
+
+{
+  console.log("update notice");
+  check("version compare", cmpVersions("0.2.0", "0.1.1") === 1 && cmpVersions("0.1.1", "0.2.0") === -1 && cmpVersions("0.1.1", "0.1.1") === 0);
+  check("prerelease stripped in compare", cmpVersions("0.3.0-beta.1", "0.2.9") === 1);
+
+  const before = existsSync(UPDATE_FILE) ? readFileSync(UPDATE_FILE, "utf8") : undefined;
+  try {
+    writeFileSync(UPDATE_FILE, JSON.stringify({ checkedAt: Date.now(), latestVersion: "99.0.0", notes: "New: salvaging and heavy-shape warnings" }));
+    const withNotice = await composeReview("medium", { remember: false });
+    check("pending update announced", withNotice.prompt.includes("v99.0.0") && withNotice.prompt.includes("npm install @elderengineer/opencode-code-review@latest"));
+    check("announcement marked as notified", readUpdateNotice("0.1.1") === undefined &&
+      JSON.parse(readFileSync(UPDATE_FILE, "utf8")).notifiedVersion === "99.0.0");
+    const again = await composeReview("medium", { remember: false });
+    check("announced only once", !again.prompt.includes("v99.0.0"));
+  } finally {
+    if (before === undefined) rmSync(UPDATE_FILE, { force: true });
+    else writeFileSync(UPDATE_FILE, before);
+  }
+
+  process.env.CODE_REVIEW_NO_UPDATE_CHECK = "1";
+  check("env var disables notices", readUpdateNotice("0.1.1") === undefined);
+  delete process.env.CODE_REVIEW_NO_UPDATE_CHECK;
+
+  // Injectable path: update-state logic is testable without touching the
+  // real cache file (a mid-test kill would otherwise leave residue).
+  const dir = mkdtempSync(join(tmpdir(), "ocr-update-"));
+  const cacheFile = join(dir, "update.json");
+  writeFileSync(cacheFile, JSON.stringify({ checkedAt: Date.now(), latestVersion: "99.0.0", notes: "New: salvaging" }));
+  check("hermetic: notice from injected path", readUpdateNotice("0.1.1", cacheFile)?.version === "99.0.0");
+  markNotified("99.0.0", cacheFile);
+  check("hermetic: marked version silent", readUpdateNotice("0.1.1", cacheFile) === undefined);
+  writeFileSync(cacheFile, JSON.stringify({ checkedAt: Date.now(), latestVersion: 2 }));
+  check("hermetic: corrupt latestVersion ignored", readUpdateNotice("0.1.1", cacheFile) === undefined);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -464,31 +503,31 @@ const gitRunner = (dir: string) => (args: string[]) =>
   const dir = mkdtempSync(join(tmpdir(), "ocr-compose-"));
   const stateFile = join(process.env.HOME!, ".local/state/opencode/code-review-level");
   const beforeState = existsSync(stateFile) ? readFileSync(stateFile, "utf8") : undefined;
-  const out = await composeReview("medium --fix", { worktree: dir });
+  const out = await composeReview("medium --fix", { worktree: dir, updateCheck: false });
   check("cell included", out.prompt.includes("## Phase 0 — Gather the diff"));
   check("reviewer named", out.prompt.includes("reviewer-medium"));
   check("fix appendix", out.prompt.includes("Applying fixes (--fix)"));
   check("no comment appendix", !out.prompt.includes("Posting to GitHub"));
 
-  const commented = await composeReview("--comment 42", { worktree: dir, remember: false });
+  const commented = await composeReview("--comment 42", { worktree: dir, remember: false, updateCheck: false });
   check("comment appendix", commented.prompt.includes("Posting to GitHub (--comment)"));
 
-  const gitlab = await composeReview("--comment !7", { worktree: dir, remember: false });
+  const gitlab = await composeReview("--comment !7", { worktree: dir, remember: false, updateCheck: false });
   check("gitlab appendix on MR target", gitlab.prompt.includes("glab mr note"));
 
   const modelBefore = rememberedModel();
-  const pinned = await composeReview("high using opencode/kimi-k3", { worktree: dir, remember: false });
+  const pinned = await composeReview("high using opencode/kimi-k3", { worktree: dir, remember: false, updateCheck: false });
   check("pin announcement", pinned.prompt.includes("pinned to `opencode/kimi-k3`"));
   check("pin not written when remember=false", rememberedModel() === modelBefore);
-  const badpin = await composeReview("high using kimi", { worktree: dir, remember: false });
+  const badpin = await composeReview("high using kimi", { worktree: dir, remember: false, updateCheck: false });
   check("invalid pin reported", badpin.prompt.includes("Ignoring unrecognized model pin"));
 
   writeFileSync(stateFile, "high\n");
-  await composeReview("medium", { worktree: dir, remember: false });
+  await composeReview("medium", { worktree: dir, remember: false, updateCheck: false });
   check("sticky not written when remember=false", readFileSync(stateFile, "utf8") === "high\n");
 
   // and with remember on (default), an explicit level does persist
-  await composeReview("max", { worktree: dir });
+  await composeReview("max", { worktree: dir, updateCheck: false });
   check("explicit level persisted", rememberedLevel() === "max");
   if (beforeState === undefined) {
     rmSync(stateFile, { force: true });

@@ -52,5 +52,5 @@ const positional = argv.filter(
     argv[i - 1] !== "--server",
 );
 
-const result = await composeReview(positional.join(" "), worktree ? { worktree } : {});
+const result = await composeReview(positional.join(" "), { worktree, remember: false, updateCheck: false });
 process.stdout.write(result.prompt);

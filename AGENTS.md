@@ -29,7 +29,8 @@ opencode does **not** load this folder. It loads the installed copy at
 
 After changing source: copy the changed files over the installed copy, then
 restart opencode (plugins/commands load at startup only). Never edit only the
-installed copy — it gets overwritten by the next sync.
+installed copy — it gets overwritten by the next sync. The installed copy also
+needs `package.json`: the plugin reads its own version from it.
 
 ## Commit messages
 
@@ -58,6 +59,9 @@ titles. Non-conforming subjects still render, under "Other changes".
   import). Keep the `PHASE_0_GATHER_DIFF` / `PHASE_2_VERIFY_*` /
   `PHASE_3_SWEEP` names; fragment texts must stay byte-stable (probed via
   `--cells` output).
+- `compiler/update.ts` — daily npm/GitHub update check; caches the result under
+  `~/.local/state/opencode` and surfaces a once-per-version update notice in
+  the review preamble.
 - `compiler/lenses.ts` — project lenses: `<repo>/.opencode/code-review/lenses/<name>.md`,
   frontmatter `paths:` gating + `model:`/`variant:` pins (the plugin injects a
   `reviewer-lens-<name>` agent per project lens at startup). Naming rule: a

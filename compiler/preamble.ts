@@ -3,6 +3,7 @@ import { LEVELS } from "./fragments.ts";
 import { MODEL_REF_RE, type CommandInvocation } from "./args.ts";
 import { MODEL_AUTO } from "./effort.ts";
 import { routeRef, type LadderEntry } from "./route.ts";
+import type { UpdateNotice } from "./update.ts";
 
 /**
  * The preamble: the parenthetical that opens the composed prompt and explains
@@ -20,6 +21,8 @@ export interface PreambleInput {
   pinnedModel: string | undefined;
   /** Resolved auto ladder when the active pin is `auto`. */
   autoLadder?: LadderEntry[];
+  /** Pending plugin update, when npm has a newer version not yet announced. */
+  updateNotice?: UpdateNotice;
 }
 
 const VALID_LEVELS = LEVELS.join(", ");
@@ -80,6 +83,12 @@ export function modelPinNote({ args, pinnedModel, autoLadder }: PreambleInput): 
   return "";
 }
 
+/** Parenthetical for a pending plugin update — surfaced once per version. */
+const updateNote = ({ version, notes }: UpdateNotice): string => {
+  const detail = notes ? ` — ${notes}` : "";
+  return `(A newer version of this plugin is available: opencode-code-review v${version}${detail}. Tell the user in one short line as you begin, including how to update: \`npm install @elderengineer/opencode-code-review@latest\`, then restart opencode. Do not interrupt the review for this.)\n\n`;
+};
+
 export function buildPreamble(input: PreambleInput): string {
   const { args, remembered, level } = input;
   let body = "";
@@ -103,5 +112,6 @@ export function buildPreamble(input: PreambleInput): string {
 `;
   }
 
-  return body + (args.post ? POST_IGNORED : "") + modelPinNote(input);
+  return body + (args.post ? POST_IGNORED : "") + modelPinNote(input) +
+    (input.updateNotice ? updateNote(input.updateNotice) : "");
 }
