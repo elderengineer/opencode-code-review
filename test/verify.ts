@@ -13,6 +13,8 @@ import { collectLenses, readLensPins, swapLensTexts, EMPTY_BUNDLE } from "../com
 import { composeReview, reviewerFor } from "../compiler/prompt.ts";
 import { buildPreamble } from "../compiler/preamble.ts";
 import { diffDigest, decodeGitPath, heavyShapeNote } from "../compiler/budget.ts";
+import { extractJsonFindings, salvageSession } from "../compiler/salvage.ts";
+import { Database } from "bun:sqlite";
 import { cmpVersions, UPDATE_FILE, markNotified, readUpdateNotice } from "../compiler/update.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
 import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES, SPAWN_FALLBACK_NOTE } from "../compiler/fragments.ts";
@@ -337,6 +339,59 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("hermetic: marked version silent", readUpdateNotice("0.1.1", cacheFile) === undefined);
   writeFileSync(cacheFile, JSON.stringify({ checkedAt: Date.now(), latestVersion: 2 }));
   check("hermetic: corrupt latestVersion ignored", readUpdateNotice("0.1.1", cacheFile) === undefined);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- salvage (findings from interrupted review sessions) ---------------------------
+
+{
+  console.log("salvage");
+  const dir = mkdtempSync(join(tmpdir(), "ocr-salvage-"));
+  const dbPath = join(dir, "opencode.db");
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, agent TEXT, title TEXT, time_created INTEGER, tokens_output INTEGER);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+    CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, time_created INTEGER, data TEXT);
+  `);
+  const insertSession = db.prepare("INSERT INTO session (id, parent_id, agent, title, time_created, tokens_output) VALUES (?, ?, ?, ?, ?, ?)");
+  const insertMessage = db.prepare("INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)");
+  const insertPart = db.prepare("INSERT INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)");
+
+  insertSession.run("ses_parent", null, "build", "review parent", 1, 0);
+  // child 1: completed finder with fenced JSON findings
+  insertSession.run("ses_c1", "ses_parent", "reviewer-medium", "Finder: line-scan", 2, 500);
+  insertMessage.run("m1", "ses_c1", 10, JSON.stringify({ role: "user" }));
+  insertMessage.run("m2", "ses_c1", 20, JSON.stringify({ role: "assistant" }));
+  insertPart.run("p1", "m2", 21, JSON.stringify({ type: "text", text: "Candidates:\n```json\n[{\"file\":\"src/a.ts\",\"line\":12,\"summary\":\"off by one\"}]\n```" }));
+  // child 2: prose-only finder (no JSON block)
+  insertSession.run("ses_c2", "ses_parent", "reviewer-medium", "Finder: efficiency", 3, 400);
+  insertMessage.run("m3", "ses_c2", 30, JSON.stringify({ role: "user" }));
+  insertMessage.run("m4", "ses_c2", 40, JSON.stringify({ role: "assistant" }));
+  insertPart.run("p2", "m4", 41, JSON.stringify({ type: "text", text: "Found a duplicated helper in src/b.ts line 5 that wastes memory." }));
+  // child 3: interrupted verifier — assistant messages but zero text parts
+  insertSession.run("ses_c3", "ses_parent", "reviewer-medium", "Verify candidate A", 4, 10);
+  insertMessage.run("m5", "ses_c3", 50, JSON.stringify({ role: "user" }));
+  insertMessage.run("m6", "ses_c3", 60, JSON.stringify({ role: "assistant" }));
+  insertPart.run("p3", "m6", 61, JSON.stringify({ type: "tool", state: { status: "error" } }));
+  // child 4: non-reviewer (excluded)
+  insertSession.run("ses_c4", "ses_parent", "explore", "scout", 5, 100);
+  insertMessage.run("m7", "ses_c4", 70, JSON.stringify({ role: "user" }));
+  insertMessage.run("m8", "ses_c4", 80, JSON.stringify({ role: "assistant" }));
+  insertPart.run("p4", "m8", 81, JSON.stringify({ type: "text", text: "scouting notes" }));
+
+  const report = salvageSession("ses_parent", { dbPath });
+
+  check("salvage: only reviewer children kept", report.children.length === 2);
+  check("salvage: non-reviewer + empty children skipped", report.totals.skipped === 2 && report.skipped.some((s) => s.agent === "explore") && report.skipped.some((s) => s.id === "ses_c3"));
+  const c1 = report.children.find((c) => c.id === "ses_c1");
+  check("salvage: fenced JSON extracted", Array.isArray(c1?.findings) && c1!.findings!.length === 1 && (c1!.findings![0] as Record<string, unknown>).file === "src/a.ts");
+  const c2 = report.children.find((c) => c.id === "ses_c2");
+  check("salvage: prose child kept as text", c2 !== undefined && c2.findings === undefined && c2.text.includes("duplicated helper"));
+  check("salvage: totals consistent", report.totals.withFindings === 1 && report.totals.textOnly === 1);
+  check("salvage: parent recorded", report.parent.id === "ses_parent" && report.parent.agent === "build");
+  check("salvage: bare JSON array extracted", (extractJsonFindings('[{"file":"x","line":1}]')?.length) === 1);
+  db.close();
   rmSync(dir, { recursive: true, force: true });
 }
 
