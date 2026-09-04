@@ -41,6 +41,15 @@ release notes by `release.yml` at tag time. With squash merges the PR title is
 the commit subject, and the `Semantic PR` workflow rejects non-conforming
 titles. Non-conforming subjects still render, under "Other changes".
 
+Releases: release-please watches master and opens a
+`chore(master): release vX.Y.Z` PR with the version bump pre-computed from
+the conventional commits (feat → minor, fix → patch). Merging it tags the
+version and creates the GitHub release; the tag then triggers `release.yml`
+(tests → npm publish → install footer appended to the release notes). This
+chain needs the `RELEASE_PAT` secret (classic PAT, repo scope) — tags pushed
+with the default `GITHUB_TOKEN` do not trigger `release.yml`. Manual tags
+still work but must match `package.json` (guarded in `release.yml`).
+
 ## Layout
 
 - `plugin.ts` — plugin entry; this opencode version requires module shape
