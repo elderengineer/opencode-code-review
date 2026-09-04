@@ -412,6 +412,11 @@ function check(name: string, cond: boolean) {
   const p2 = buildPreamble({ args: plain, remembered: "high", level: "high" });
   check("sticky level announced", p2.includes("reusing high"));
 
+  const typed = parseCommand("medium");
+  const p2b = buildPreamble({ args: typed, remembered: "high", level: "medium" });
+  check("typed level: no sticky announcement", !p2b.includes("No effort level given"));
+  check("mistyped level cites remembered", buildPreamble({ args: parseCommand("maxxx"), remembered: "medium", level: "medium" }).includes("typed last time"));
+
   const post = parseCommand("--post");
   const p3 = buildPreamble({ args: post, remembered: undefined, level: "medium" });
   check("--post reported ignored", p3.includes("--post"));
