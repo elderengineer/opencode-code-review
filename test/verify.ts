@@ -14,7 +14,7 @@ import { composeReview, reviewerFor } from "../compiler/prompt.ts";
 import { buildPreamble } from "../compiler/preamble.ts";
 import { diffDigest, decodeGitPath } from "../compiler/budget.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
-import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES } from "../compiler/fragments.ts";
+import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES, SPAWN_FALLBACK_NOTE } from "../compiler/fragments.ts";
 import {
   buildLadder,
   readFavorites,
@@ -299,8 +299,12 @@ function check(name: string, cond: boolean) {
   check("medium: unthrottled spawn protocol", medium.includes("no concurrency cap"));
   check("medium: halve in-flight on congestion", medium.includes("half as many spawns in flight") && medium.includes("429"));
   check("medium: wait has a mechanism", medium.includes("sleep 45"));
+  check("medium: waits coalesce per round", medium.includes("wait once for the whole round"));
+  check("medium: generic failure branch", medium.includes("any other error") && medium.includes("permission rejection"));
+  check("medium: alternates pointer at embed site", medium.includes("model alternates are configured"));
   check("medium: inline fallback on repeated congestion", medium.includes("run that lens or verification") && medium.includes("sequentially"));
   check("medium: no spawn wave cap", !medium.includes("waves of at most"));
+  check("medium: note embedded at both spawn sites", medium.split(SPAWN_FALLBACK_NOTE).length - 1 === 2);
 
   const high = cell("high");
   check("high: recall rubric", high.includes("PLAUSIBLE by default"));
@@ -316,6 +320,7 @@ function check(name: string, cond: boolean) {
   check("max: maximum lead-in", max.includes("maximum effort"));
   check("max: sweep congestion protocol", max.includes("half as many spawns in flight"));
   check("max: no spawn wave cap", !max.includes("waves of at most"));
+  check("max: note embedded at all three spawn sites", max.split(SPAWN_FALLBACK_NOTE).length - 1 === 3);
 }
 
 // --- lenses --------------------------------------------------------------------

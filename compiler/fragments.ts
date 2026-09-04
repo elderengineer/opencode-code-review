@@ -26,17 +26,22 @@ export type Level = (typeof LEVELS)[number];
  * back to inline sequential work on a repeat failure.
  */
 export const SPAWN_FALLBACK_NOTE = `Spawn every ${TASK_TOOL} call for this phase as soon as it is ready — do not
-hold any back; there is no concurrency cap. If a spawn fails with a
+hold any back; there is no concurrency cap. If one or more spawns fail with a
 congestion-shaped error (429, rate limit, overloaded, capacity, bad gateway /
-5xx): wait 30–60 seconds (for example \`sleep 45\`), re-issue the identical
-task, and from then on keep at most half as many spawns in flight as you did
-before (halving again each time congestion recurs). After five consecutive
-successful spawns you may raise the in-flight count back up one step. If the
-same spawn fails with congestion a second time, run that lens or verification
-yourself in this context, sequentially. Never skip a lens or verification
-because of congestion. If the ${TASK_TOOL} tool is not available in your
-current tool set, do not error — perform each lens (and each verification)
-yourself, sequentially, in this context.`;
+5xx): wait once for the whole round — 30–60 seconds (for example \`sleep 45\`)
+— then re-issue each failed spawn's identical task, and from then on keep at
+most half as many spawns in flight as you did before (halving again each time
+congestion recurs). After five consecutive successful spawns you may raise the
+in-flight count back up one step. If the same spawn fails with congestion a
+second time, run that lens or verification yourself in this context,
+sequentially. If a spawn fails with any other error (permission rejection,
+timeout, connection reset, malformed output), retry that same subagent once,
+then run that lens or verification yourself in this context, sequentially.
+Never skip a lens or verification because a spawn failed. If the ${TASK_TOOL}
+tool is not available in your current tool set, do not error — perform each
+lens (and each verification) yourself, sequentially, in this context. When
+model alternates are configured, a model-shaped failure routes to the
+alternates instead of waiting and halving.`;
 
 /**
  * Added for `--model auto`: the fleet runs a cost-ordered ladder of the
