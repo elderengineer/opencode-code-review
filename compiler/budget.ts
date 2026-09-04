@@ -138,3 +138,29 @@ export function fleetHint(level: string, target: string, digest: DiffDigest | un
     budget,
   };
 }
+
+/**
+ * Advisory heads-up for a heavy review shape — a diff of 2,500+ lines, or
+ * 800+ lines multiplied by two or more project lenses (each specialist
+ * re-reads the whole diff and adds candidates to verify), can run long
+ * against the session's wall clock. Fires at every fleet level: the observed
+ * timeout was a medium run. Purely informational — fleet size is fixed by
+ * level.
+ *
+ * Only reached with an empty or range target: path targets produce no digest
+ * at all, so a fired note always benefits from the narrowing advice.
+ */
+
+const HEAVY_LENS_LINES = 800;
+const HEAVY_BARE_LINES = 2500;
+
+export function heavyShapeNote(level: string, digest: DiffDigest | undefined, specialists: number): string {
+  if (level === "low" || digest === undefined) return "";
+  const heavy = (specialists >= 2 && digest.lines >= HEAVY_LENS_LINES) || digest.lines >= HEAVY_BARE_LINES;
+  if (!heavy) return "";
+
+  const lensNote = specialists > 0
+    ? ` with ${specialists} project lens${specialists === 1 ? "" : "es"} active`
+    : "";
+  return `(Heavy review shape — tell the user in one short line as you begin: about ${digest.lines} changed lines${lensNote}, so this review may run long. If they want it faster, a narrower target — a shorter range or a path — shrinks the diff and changes which project lenses activate.)\n\n`;
+}
