@@ -8,6 +8,7 @@ import { composeReview, reviewerFor } from "./compiler/prompt.ts";
 import { rememberedModel } from "./compiler/effort.ts";
 import { readLensPins, type LensPins } from "./compiler/lenses.ts";
 import { resolveAutoLadder, setActiveLadder, routeRef, type LadderEntry } from "./compiler/route.ts";
+import { currentVersion, refreshUpdateCache } from "./compiler/update.ts";
 
 /**
  * opencode plugin entry. On startup the config hook injects:
@@ -128,6 +129,11 @@ export const CodeReviewPlugin: PluginModule = {
     ]);
     const lensPins = await readLensPins(input.worktree || input.directory || process.cwd());
     const pinnedModel = rememberedModel();
+
+    // Daily update check (npm + GitHub releases): fire-and-forget so it never
+    // delays startup; the result lands in the state cache for the next
+    // composed review to announce once.
+    void refreshUpdateCache(currentVersion());
 
     // `--model auto`: resolve the cost-ordered favorite ladder now — the
     // agents injected below pin to it, so a mid-session pin change still

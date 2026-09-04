@@ -5,6 +5,7 @@ import { diffDigest, fleetHint, heavyShapeNote } from "./budget.ts";
 import { collectLenses } from "./lenses.ts";
 import { activeLadder, type LadderEntry } from "./route.ts";
 import { composeCell } from "./cells.ts";
+import { currentVersion, markNotified, readUpdateNotice, type UpdateNotice } from "./update.ts";
 import { buildPreamble } from "./preamble.ts";
 import { githubCommentAppendix, gitlabCommentAppendix, fixAppendix } from "./appendices.ts";
 
@@ -42,6 +43,8 @@ export interface CompileOptions {
   worktree?: string;
   /** Persist an explicitly typed level as the sticky default (default true). */
   remember?: boolean;
+  /** Check npm for a newer plugin version and mention it once (default true). */
+  updateCheck?: boolean;
 }
 
 export async function composeReview(rawArguments: string, options: CompileOptions = {}): Promise<CompileResult> {
@@ -69,7 +72,17 @@ export async function composeReview(rawArguments: string, options: CompileOption
   const digest = await diffDigest(args.target, worktree);
   const [lenses, hint] = [await collectLenses(worktree, digest), fleetHint(level, args.target, digest)];
 
-  const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder });
+  let updateNotice: UpdateNotice | undefined;
+  if (options.updateCheck !== false) {
+    const current = currentVersion();
+    const notice = current ? readUpdateNotice(current) : undefined;
+    if (notice) {
+      updateNotice = notice;
+      markNotified(notice.version);
+    }
+  }
+
+  const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder, updateNotice });
   const targetClause = args.target ? `Review target: \`${args.target}\`\n\n` : "";
   const shapeNote = heavyShapeNote(level, digest, lenses.specialists.length);
   const cell = composeCell({ level, reviewer: reviewerFor(level), lenses, fallbacks });

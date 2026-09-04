@@ -144,6 +144,14 @@ effect.
    (**Phase 3**, max), emits ranked JSON findings.
 4. `--fix` applies them; `--comment` posts them.
 
+## Updates
+
+The plugin checks npm once a day for a newer published version and, when one
+exists, the next review mentions it with that version's release notes and the
+update command. It talks only to `registry.npmjs.org` and `api.github.com`
+(read-only; nothing is sent), prompts once per version, and is disabled by
+setting `CODE_REVIEW_NO_UPDATE_CHECK`.
+
 **Scope:** the diff under review is `git diff @{upstream}...HEAD` (or
 `main...HEAD` / `HEAD~1`) **plus working-tree changes** (`git diff HEAD`).
 Untracked files that were never `git add`ed are invisible to every diff —
