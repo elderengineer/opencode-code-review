@@ -120,17 +120,16 @@ function fleetCell({ level, reviewer, lenses, fallbacks }: CellInput): string {
     ? `## Phase 1 — Find candidates (5 correctness lenses + 3 cleanup lenses + 1 altitude lens + 1 conventions lens${lensNote}, up to ${perLensCap} each)`
     : `## Phase 1 — Find candidates (3 correctness lenses + 3 cleanup lenses + 1 altitude lens + 1 conventions lens${lensNote}, up to ${perLensCap} each)`;
 
-  const batchNote = `Spawn finders in waves of at most 5 concurrent ${TASK_TOOL} calls; start the next wave only when the previous wave returns.`;
   const finderBrief = wide
     ? `Run **${total} independent finders** via the ${TASK_TOOL} tool
 (subagent_type: \`${reviewer}\`). Each
 surfaces **up to ${perLensCap} candidate findings**. Do NOT let one lens's conclusions
 suppress another's — if two lenses flag the same line for different reasons,
-record both. ${batchNote} ${SPAWN_FALLBACK_NOTE}`
+record both. ${SPAWN_FALLBACK_NOTE}`
     : `Run **${total} independent finders** via the ${TASK_TOOL} tool
 (subagent_type: \`${reviewer}\`). Each
 surfaces **up to ${perLensCap} candidate findings** with \`file\`, \`line\`, a one-line
-\`summary\`, and a concrete \`failure_scenario\`. ${batchNote} ${SPAWN_FALLBACK_NOTE}`;
+\`summary\`, and a concrete \`failure_scenario\`. ${SPAWN_FALLBACK_NOTE}`;
 
   const fallbackBlock = fallbacks && fallbacks.length > 0
     ? MODEL_FALLBACK_CLAUSE(reviewer, fallbacks) + "\n"

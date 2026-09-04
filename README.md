@@ -199,7 +199,11 @@ You are reviewing the Android app (Kotlin, Compose, coroutines)…
 
 - Gated lenses that don't match the diff fall back to built-in text.
 - Fleet math: medium/high run 8 + N finders, max runs 10 + N (N = active
-  new-name project lenses); `low` never spawns.
+  new-name project lenses); `low` never spawns. Spawning is unthrottled — on a
+  rate-limit rejection the orchestrator waits, re-issues, and halves its
+  in-flight subagents until the provider recovers; a repeat failure on the same
+  spawn falls back to inline sequential work, so congestion degrades the review
+  instead of aborting it.
 - Every new-name project lens (not a built-in replacement) gets its own
   `reviewer-lens-<name>` finder agent, registered at plugin load with its
   `model:`/`variant:` pins (restart after adding one; lens text and `paths:`
