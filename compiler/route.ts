@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 /**
  * `--model auto` — route the reviewer fleet to the cheapest of the user's
@@ -210,4 +210,81 @@ export async function resolveAutoLadder(
   if (!catalog || catalog.size === 0) return undefined;
   const ladder = buildLadder(readFavorites(favoritesPath), catalog);
   return ladder.length > 0 ? ladder : undefined;
+}
+
+// --- disk cache --------------------------------------------------------------
+//
+// Startup must stay fast and silent: it never touches the network, it only
+// reads this cache synchronously (no warning when the cache is empty — the
+// review preamble already explains the degraded fallback in context). The
+// network fetch is deferred to the first `/code-review` call, where
+// refreshLadderCache re-resolves in the background and stores the result for
+// the next launch. Agents and the composed prompt always agree because both
+// are sourced from the startup cache within a session; the background refresh
+// deliberately never calls setActiveLadder.
+
+const LADDER_CACHE_FILE = join(homedir(), ".local/state/opencode/code-review-ladder.json");
+
+interface LadderCacheShape {
+  ladder?: unknown;
+  cachedAt?: unknown;
+}
+
+/** Strictly validate one cached entry; anything else means a corrupt cache. */
+function validLadderEntry(e: unknown): e is LadderEntry {
+  if (typeof e !== "object" || e === null) return false;
+  const { route, effective, pot } = e as Record<string, unknown>;
+  if (typeof route !== "object" || route === null) return false;
+  const { providerID, modelID } = route as Record<string, unknown>;
+  return (
+    typeof providerID === "string" &&
+    typeof modelID === "string" &&
+    typeof effective === "number" &&
+    typeof pot === "boolean"
+  );
+}
+
+/**
+ * Read the cached ladder synchronously. Returns undefined on any miss —
+ * missing file, corrupt JSON, or wrong shape — so startup never fails.
+ */
+export function readLadderCache(path: string = LADDER_CACHE_FILE): LadderEntry[] | undefined {
+  let parsed: LadderCacheShape;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as LadderCacheShape;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed?.ladder)) return undefined;
+  const ladder = (parsed.ladder as unknown[]).filter(validLadderEntry);
+  return ladder.length > 0 ? ladder.slice(0, AUTO_LADDER_MAX) : undefined;
+}
+
+/** Best-effort cache write; failures are swallowed — the cache is a convenience. */
+export function writeLadderCache(ladder: LadderEntry[], path: string = LADDER_CACHE_FILE): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ cachedAt: Date.now(), ladder }));
+  } catch {
+    // best-effort; a missing cache only means auto degrades for a session
+  }
+}
+
+/**
+ * Re-resolve the ladder and cache it for the next launch. Never throws and
+ * never touches the in-memory active ladder (agents were pinned at startup
+ * from the cache read — mid-session swaps would desync them from the prompt).
+ * A failed resolve leaves any existing cache intact.
+ */
+export async function refreshLadderCache(
+  serverUrl: URL | string,
+  favoritesPath?: string,
+  cachePath?: string,
+): Promise<void> {
+  try {
+    const ladder = await resolveAutoLadder(serverUrl, favoritesPath);
+    if (ladder !== undefined) writeLadderCache(ladder, cachePath);
+  } catch {
+    // best-effort; the next launch simply reuses its cache
+  }
 }

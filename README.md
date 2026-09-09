@@ -126,11 +126,12 @@ Two override mechanisms:
 **Mechanic, honestly:** opencode binds a subagent's model from its agent
 definition at startup — the task tool has no per-call model parameter. So all
 overrides are read when the plugin loads: `using`/`--model` persists to a
-sticky state file and pins the `reviewer-*` agents (with `auto`, it also
-resolves the ladder and injects hidden `reviewer-<level>-alt<N>` alternates),
-lens `model:` pins spawn per-lens agents (`reviewer-lens-<name>`). Either
-way, **restart opencode after changing them** for the new model to take
-effect.
+sticky state file and pins the `reviewer-*` agents (with `auto`, it pins from
+the cached favorite ladder and injects hidden `reviewer-<level>-alt<N>`
+alternates), lens `model:` pins spawn per-lens agents
+(`reviewer-lens-<name>`). Either way, **restart opencode after changing them**
+for the new model to take effect. With `auto`, the ladder refreshes in the
+background on the first `/code-review` call, so startup stays fast.
 
 ## How a review runs
 
