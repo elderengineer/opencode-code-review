@@ -71,6 +71,10 @@ still work but must match `package.json` (guarded in `release.yml`).
 - `compiler/update.ts` — daily npm/GitHub update check; caches the result under
   `~/.local/state/opencode` and surfaces a once-per-version update notice in
   the review preamble.
+- `compiler/salvage.ts` — read-only CLI that recovers child-subagent output
+  from opencode's local database for failed/interrupted reviews
+  (`bun compiler/salvage.ts <parentSessionId>`); merge/dedupe/cap is the
+  caller's job.
 - `compiler/lenses.ts` — project lenses: `<repo>/.opencode/code-review/lenses/<name>.md`,
   frontmatter `paths:` gating + `model:`/`variant:` pins (the plugin injects a
   `reviewer-lens-<name>` agent per project lens at startup). Naming rule: a
@@ -80,7 +84,8 @@ still work but must match `package.json` (guarded in `release.yml`).
 
 ## Hard constraints
 
-- Zero-dependency compiler: node builtins + `Bun.Glob` only. Plugin deps are
+- Zero-dependency compiler: node builtins + `Bun.Glob` only (plus `bun:sqlite`
+  in `compiler/salvage.ts` — a Bun builtin, still no npm deps). Plugin deps are
   only `@opencode-ai/plugin` + `zod` (resolved from `~/.config/opencode/node_modules`).
 - Never write `~/.config/opencode` from the plugin at runtime; runtime state
   belongs in `~/.local/state/opencode/`.
