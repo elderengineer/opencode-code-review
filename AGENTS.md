@@ -9,7 +9,7 @@ compiled prompt.
 ## Verify your changes
 
 ```bash
-bun test/verify.ts              # 87-assertion behavioral suite (hand-rolled check(); exits non-zero on failure)
+bun test/verify.ts              # behavioral suite (hand-rolled check(); exits non-zero on failure)
 bun compiler/cli.ts --cells     # dump the 4 level cells as JSON — byte-stable snapshot reference
 bun compiler/cli.ts high --fix  # inspect a composed prompt (add --worktree <dir> to compose against a repo)
 ```
