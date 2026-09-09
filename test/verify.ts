@@ -25,6 +25,9 @@ import {
   effectiveCost,
   setActiveLadder,
   activeLadder,
+  readLadderCache,
+  writeLadderCache,
+  refreshLadderCache,
   routeRef,
   type Catalog,
   type ModelRoute,
@@ -178,6 +181,23 @@ function check(name: string, cond: boolean) {
   writeFileSync(favFile, "{not json");
   check("corrupt favorites tolerated", readFavorites(favFile).length === 0);
   rmSync(dir, { recursive: true, force: true });
+
+  // ladder disk cache: startup reads it sync, first review refreshes it.
+  // Uses a tmp path so the real ~/.local/state cache is never touched.
+  const cacheDir = mkdtempSync(join(tmpdir(), "ocr-ladder-cache-"));
+  const cacheFile = join(cacheDir, "code-review-ladder.json");
+  check("missing ladder cache tolerated", readLadderCache(cacheFile) === undefined);
+  writeFileSync(cacheFile, "{not json");
+  check("corrupt ladder cache tolerated", readLadderCache(cacheFile) === undefined);
+  writeFileSync(cacheFile, JSON.stringify({ ladder: [{ route: { providerID: "a" }, effective: "x", pot: false }] }));
+  check("malformed ladder entries dropped", readLadderCache(cacheFile) === undefined);
+  writeLadderCache(ladder.slice(0, 2), cacheFile);
+  const cached = readLadderCache(cacheFile);
+  check("ladder cache roundtrip", cached !== undefined && cached.length === 2 && routeRef(cached[0].route) === "zai-coding-plan/glm-flash" && cached[0].pot === true);
+  // failed refresh never throws and never wipes a good cache (unreachable server)
+  await refreshLadderCache("http://127.0.0.1:1", undefined, cacheFile);
+  check("failed refresh keeps cache", readLadderCache(cacheFile)?.length === 2);
+  rmSync(cacheDir, { recursive: true, force: true });
 
   // arg parsing
   check("--model auto parsed", parseCommand("--model auto high").modelPin === "auto");

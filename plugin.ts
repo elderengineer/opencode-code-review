@@ -5,9 +5,9 @@ import { tool, type PluginModule } from "@opencode-ai/plugin";
 
 import { LEVELS, type Level } from "./compiler/fragments.ts";
 import { composeReview, reviewerFor } from "./compiler/prompt.ts";
-import { rememberedModel } from "./compiler/effort.ts";
+import { rememberedModel, MODEL_AUTO } from "./compiler/effort.ts";
 import { readLensPins, type LensPins } from "./compiler/lenses.ts";
-import { resolveAutoLadder, setActiveLadder, routeRef, type LadderEntry } from "./compiler/route.ts";
+import { readLadderCache, refreshLadderCache, setActiveLadder, routeRef, type LadderEntry } from "./compiler/route.ts";
 import { currentVersion, refreshUpdateCache } from "./compiler/update.ts";
 
 /**
@@ -18,10 +18,12 @@ import { currentVersion, refreshUpdateCache } from "./compiler/update.ts";
  *     by default they inherit the session model and variant; `max` pins
  *     variant "max"; a sticky `using <model>`/`--model` pin (state file)
  *     overrides the model for all of them until the plugin next loads;
- *     `--model auto` resolves the cost-ordered favorite ladder at startup,
- *     pins the primary to its cheapest entry and injects hidden
- *     reviewer-<level>-alt<i> alternates the prompt falls back to on
- *     model-shaped failures (quota, credits, rate limits)
+ *     `--model auto` pins the primary to the cheapest entry of the cached
+ *     favorite ladder and injects hidden reviewer-<level>-alt<i> alternates
+ *     the prompt falls back to on model-shaped failures (quota, credits,
+ *     rate limits). The ladder is read synchronously from disk at startup —
+ *     no network, no warning when the cache is empty — and re-resolved in
+ *     the background on the first `/code-review` call for the next launch.
  *   - reviewer-lens-<name> subagents, one per project lens in the session's
  *     worktree, carrying the lens's optional model/variant pins
  *
@@ -135,23 +137,18 @@ export const CodeReviewPlugin: PluginModule = {
     // composed review to announce once.
     void refreshUpdateCache(currentVersion());
 
-    // `--model auto`: resolve the cost-ordered favorite ladder now — the
-    // agents injected below pin to it, so a mid-session pin change still
-    // waits for the next plugin load, like any explicit pin.
+    // `--model auto`: pin from the cached favorite ladder. Synchronous disk
+    // read only — the network fetch is deferred to the first /code-review
+    // call (see the tool execute below), so startup never blocks and never
+    // warns; a missing cache simply inherits the session model until the
+    // background refresh lands for the next launch.
     let autoLadder: LadderEntry[] | undefined;
-    if (pinnedModel === "auto") {
-      try {
-        autoLadder = await resolveAutoLadder(input.serverUrl);
-      } catch (err) {
-        console.warn(`[opencode-code-review] auto ladder resolution failed: ${err}`);
-      }
+    if (pinnedModel === MODEL_AUTO) {
+      autoLadder = readLadderCache();
       setActiveLadder(autoLadder);
-      if (autoLadder === undefined) {
-        console.warn("[opencode-code-review] --model auto active but no usable favorite ladder; reviewers inherit the session model");
-      }
     }
-    const fleetPin = pinnedModel === "auto" ? autoLadder?.[0] : undefined;
-    const primaryModel = fleetPin ? routeRef(fleetPin.route) : pinnedModel === "auto" ? undefined : pinnedModel;
+    const fleetPin = pinnedModel === MODEL_AUTO ? autoLadder?.[0] : undefined;
+    const primaryModel = fleetPin ? routeRef(fleetPin.route) : pinnedModel === MODEL_AUTO ? undefined : pinnedModel;
     return {
       config: (cfg) => {
         cfg.command ??= {};
@@ -198,6 +195,13 @@ export const CodeReviewPlugin: PluginModule = {
             const result = await composeReview(args.arguments, {
               worktree: context.worktree || context.directory,
             });
+            // Deferred auto load: re-resolve the favorite ladder in the
+            // background for the next launch. Fire-and-forget and cache-only —
+            // the current review (and its injected agents) stays on the
+            // startup cache so prompt and pins never desync mid-session.
+            if (rememberedModel() === MODEL_AUTO) {
+              void refreshLadderCache(input.serverUrl);
+            }
             return result.prompt;
           },
         }),
