@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
@@ -73,11 +73,26 @@ function readCache(file = UPDATE_FILE): UpdateCache | undefined {
   }
 }
 
-function writeCache(cache: UpdateCache, file = UPDATE_FILE): void {
+/**
+ * Merge-at-write with an atomic rename. The cache file is shared by the
+ * unawaited startup refresh and compiles calling markNotified, so a write
+ * must never wholesale-replace what is on disk: fields absent from the patch
+ * survive, and fields set to undefined are deleted (JSON.stringify drops
+ * undefined values). The temp file + rename means a reader never observes a
+ * torn write, and a crash mid-write leaves the previous file intact.
+ */
+export function writeCache(patch: UpdateCache, file = UPDATE_FILE): void {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(cache));
+    writeFileSync(tmp, JSON.stringify({ ...readCache(file), ...patch }));
+    renameSync(tmp, file);
   } catch {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // nothing to clean up
+    }
     // best-effort; the cache is a convenience, never a failure
   }
 }
@@ -103,29 +118,34 @@ async function fetchJson(url: string): Promise<unknown> {
 export async function refreshUpdateCache(current: string | undefined, file = UPDATE_FILE): Promise<void> {
   try {
     if (process.env.CODE_REVIEW_NO_UPDATE_CHECK || !current) return;
-    // Merge into the existing cache: a compile racing this refresh (the
-    // refresh is unawaited at startup) may have just written notifiedVersion,
-    // and wholesale replacement would re-announce the same version.
+    // The checkedAt probe only skips the network for a day; concurrent
+    // writers (a compile's markNotified vs this refresh) are reconciled by
+    // writeCache's merge-at-write, not by read-before-write here.
     const cached = readCache(file);
     if (cached?.checkedAt && Date.now() - cached.checkedAt < CHECK_INTERVAL_MS) return;
 
     const latest = await fetchJson(REGISTRY_LATEST) as { version?: unknown };
     if (typeof latest?.version !== "string") return;
     if (cmpVersions(latest.version, current) <= 0) {
-      writeCache({ ...readCache(file), checkedAt: Date.now() }, file);
+      // Up to date: drop any cached update state. Keeping latestVersion and
+      // notes would let a later downgrade re-announce a version the running
+      // one already covers, with notes that misdescribe it.
+      writeCache({ checkedAt: Date.now(), latestVersion: undefined, notes: undefined }, file);
       return;
     }
 
-    const update: UpdateCache = { ...readCache(file), checkedAt: Date.now(), latestVersion: latest.version };
+    // notes: undefined (release body missing or fetch failed) deletes any
+    // previous release's notes — they would misdescribe the new version.
+    let notes: string | undefined;
     try {
       const release = await fetchJson(`${RELEASE_TAG_API}${latest.version}`) as { body?: unknown };
       if (typeof release?.body === "string" && release.body.trim()) {
-        update.notes = release.body.replace(/\s+/g, " ").trim().slice(0, 300);
+        notes = release.body.replace(/\s+/g, " ").trim().slice(0, 300);
       }
     } catch {
       // notes are optional; the version-only notice still fires
     }
-    writeCache(update, file);
+    writeCache({ checkedAt: Date.now(), latestVersion: latest.version, notes }, file);
   } catch {
     // best-effort; the check is a convenience, never a failure
   }
@@ -146,6 +166,5 @@ export function readUpdateNotice(current: string | undefined, file = UPDATE_FILE
 
 /** Record that a version has been announced, so it is prompted only once. */
 export function markNotified(version: string, file = UPDATE_FILE): void {
-  const cache = readCache(file) ?? {};
-  writeCache({ ...cache, notifiedVersion: version }, file);
+  writeCache({ notifiedVersion: version }, file);
 }

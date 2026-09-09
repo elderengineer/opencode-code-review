@@ -1,7 +1,7 @@
 /**
  * Behavioral checks for the compiler. Run: bun test/verify.ts
  */
-import { rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ import { buildPreamble } from "../compiler/preamble.ts";
 import { diffDigest, decodeGitPath, heavyShapeNote } from "../compiler/budget.ts";
 import { extractJsonFindings, salvageSession } from "../compiler/salvage.ts";
 import { Database } from "bun:sqlite";
-import { cmpVersions, UPDATE_FILE, markNotified, readUpdateNotice } from "../compiler/update.ts";
+import { cmpVersions, UPDATE_FILE, markNotified, readUpdateNotice, writeCache } from "../compiler/update.ts";
 import { gitlabCommentAppendix } from "../compiler/appendices.ts";
 import { LEVELS, EXTENDED_LENS_SET, LENS_HEADINGS, LENS_TEXT, LENS_NAMES, SPAWN_FALLBACK_NOTE } from "../compiler/fragments.ts";
 import {
@@ -312,6 +312,10 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("prerelease stripped in compare", cmpVersions("0.3.0-beta.1", "0.2.9") === 1);
 
   const before = existsSync(UPDATE_FILE) ? readFileSync(UPDATE_FILE, "utf8") : undefined;
+  // Force the kill-switch off for the announcement path, whatever the
+  // operator's environment, and restore it afterward.
+  const hadKillSwitch = process.env.CODE_REVIEW_NO_UPDATE_CHECK;
+  delete process.env.CODE_REVIEW_NO_UPDATE_CHECK;
   try {
     writeFileSync(UPDATE_FILE, JSON.stringify({ checkedAt: Date.now(), latestVersion: "99.0.0", notes: "New: salvaging and heavy-shape warnings" }));
     const withNotice = await composeReview("medium", { remember: false });
@@ -323,6 +327,7 @@ const gitRunner = (dir: string) => (args: string[]) =>
   } finally {
     if (before === undefined) rmSync(UPDATE_FILE, { force: true });
     else writeFileSync(UPDATE_FILE, before);
+    if (hadKillSwitch !== undefined) process.env.CODE_REVIEW_NO_UPDATE_CHECK = hadKillSwitch;
   }
 
   process.env.CODE_REVIEW_NO_UPDATE_CHECK = "1";
@@ -339,6 +344,17 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("hermetic: marked version silent", readUpdateNotice("0.1.1", cacheFile) === undefined);
   writeFileSync(cacheFile, JSON.stringify({ checkedAt: Date.now(), latestVersion: 2 }));
   check("hermetic: corrupt latestVersion ignored", readUpdateNotice("0.1.1", cacheFile) === undefined);
+
+  // Merge-at-write semantics: a patch must not wholesale-replace the file,
+  // and an explicit undefined deletes its stored counterpart.
+  writeFileSync(cacheFile, JSON.stringify({ checkedAt: 1, latestVersion: "99.0.0", notes: "New: salvaging" }));
+  markNotified("99.0.0", cacheFile);
+  const merged = JSON.parse(readFileSync(cacheFile, "utf8"));
+  check("hermetic: markNotified merges, not replaces", merged.checkedAt === 1 && merged.notes === "New: salvaging" && merged.notifiedVersion === "99.0.0");
+  writeCache({ checkedAt: 2, latestVersion: undefined }, cacheFile);
+  const cleaned = JSON.parse(readFileSync(cacheFile, "utf8"));
+  check("hermetic: undefined patch field deletes stale state", cleaned.latestVersion === undefined && cleaned.notes === "New: salvaging" && cleaned.checkedAt === 2);
+  check("hermetic: atomic write leaves no temp file", !readdirSync(dir).some((f) => f.includes(".tmp")));
   rmSync(dir, { recursive: true, force: true });
 }
 
