@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/elderengineer/opencode-code-review/compare/v0.3.0...v0.3.1) (2026-09-09)
+
+
+### Performance Improvements
+
+* keep auto mode from slowing opencode startup ([#15](https://github.com/elderengineer/opencode-code-review/issues/15)) ([aa97684](https://github.com/elderengineer/opencode-code-review/commit/aa9768465a714b606ed9b36229409d598ceeff41))
+
 ## [0.3.0](https://github.com/elderengineer/opencode-code-review/compare/v0.2.1...v0.3.0) (2026-09-09)
 
 
