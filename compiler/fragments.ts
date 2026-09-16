@@ -81,6 +81,33 @@ commit. If a PR number, branch name, or file path was passed as an argument,
 review that target instead. Treat this diff as the review scope.
 `;
 
+/**
+ * Inline triage: the executing agent chooses the lens set from the diff it
+ * already read in Phase 0. There is no separate triage subagent — the
+ * orchestrator makes the call, so the text must bias it hard toward keeping a
+ * lens: a drop is only allowed with something concrete to point at.
+ */
+export const TRIAGE_LENSES = (skippable: readonly string[]) => `## Triage — choose the finder lenses
+
+The finder set is not fixed. From the diff you read in Phase 0, choose which
+lenses to run. The correctness core — ${CORE_LENSES.map((n) => `\`${n}\``).join(", ")} —
+always runs, and so does every project lens. You may drop only these
+perspective lenses:
+
+${skippable.map((n) => `- \`${n}\``).join("\n")}
+
+Drop a lens only when the changed lines contain nothing for it to act on: a
+documentation-only diff has no new computation to make efficient, no new
+structure to simplify, no new code that might duplicate a helper. Ask what the
+lens would point at; if you cannot name something concrete, keep it. When in
+doubt, run it — this step lowers coverage and must be deliberate, never a
+token-saving habit.
+
+Then spawn one finder per remaining lens in Phase 1, and tell the user in one
+short line which lenses you dropped and why.
+
+`;
+
 export const CLEANUP_FINDING_CONTRACT = `Cleanup, altitude, and conventions candidates use the same
 \`file\`/\`line\`/\`summary\` shape; in \`failure_scenario\`, state the concrete
 cost (what is duplicated, wasted, harder to maintain, or which convention rule
@@ -182,6 +209,20 @@ export const LENS_NAMES = [
   "conventions",
 ] as const;
 
+/** The correctness core — inline triage never drops these. */
+export const CORE_LENSES = ["line-scan", "removed-behavior", "cross-file"] as const;
+
+/** Perspective lenses inline triage may drop when the diff gives them nothing to act on. */
+export const TRIAGE_SKIPPABLE_LENSES = [
+  "reuse",
+  "simplification",
+  "efficiency",
+  "altitude",
+  "conventions",
+  "language-pitfalls",
+  "wrapper-proxy",
+] as const;
+
 const LENSES_DIR = join(import.meta.dir, "..", "prompts", "lenses");
 
 const lensFallback = (name: string) =>
@@ -205,8 +246,11 @@ export const LENS_HEADINGS: Record<string, string> = Object.fromEntries(
 
 const lensSet = (names: readonly string[]) => names.map((n) => LENS_TEXT[n]).join("\n");
 
-/** The basic fleet set: line-scan/removed-behavior/cross-file + reuse/simplification/efficiency + altitude + conventions. */
-export const BASIC_LENS_SET = lensSet([
+/** Lens texts for an explicit name list, in order. */
+export const lensSetOf = (names: readonly string[]) => lensSet(names);
+
+/** The basic fleet lenses: correctness core + reuse/simplification/efficiency + altitude + conventions. */
+export const BASIC_LENSES = [
   "line-scan",
   "removed-behavior",
   "cross-file",
@@ -215,10 +259,10 @@ export const BASIC_LENS_SET = lensSet([
   "efficiency",
   "altitude",
   "conventions",
-]);
+] as const;
 
-/** The extended fleet set: adds the language-pitfall and wrapper/proxy lenses. */
-export const EXTENDED_LENS_SET = lensSet([
+/** The extended fleet lenses: adds the language-pitfall and wrapper/proxy lenses. */
+export const EXTENDED_LENSES = [
   "line-scan",
   "removed-behavior",
   "cross-file",
@@ -229,7 +273,20 @@ export const EXTENDED_LENS_SET = lensSet([
   "efficiency",
   "altitude",
   "conventions",
-]);
+] as const;
+
+/** The built-in lens set a fleet level runs, in order. */
+export const LENS_LIST_BY_LEVEL: Record<"medium" | "high" | "max", readonly string[]> = {
+  medium: BASIC_LENSES,
+  high: BASIC_LENSES,
+  max: EXTENDED_LENSES,
+};
+
+/** The basic fleet set text. */
+export const BASIC_LENS_SET = lensSet(BASIC_LENSES);
+
+/** The extended fleet set text. */
+export const EXTENDED_LENS_SET = lensSet(EXTENDED_LENSES);
 
 /** Which lens set a fleet level runs. */
 export const LENS_SET_BY_LEVEL: Record<"medium" | "high" | "max", string> = {

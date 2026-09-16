@@ -3,8 +3,11 @@
 opencode plugin (TypeScript, run by Bun) that injects `/code-review` +
 `/code-review:create-lens` commands, a `code_review_prompt` tool, and four
 hidden `reviewer-<level>` subagents into opencode. All workflow logic is
-compiled deterministically in `compiler/`; the model only executes the
-compiled prompt.
+compiled deterministically in `compiler/`; the model executes the compiled
+prompt and makes exactly one judgment call in it — at medium+ the **triage**
+step lets it drop perspective lenses the diff gives nothing to act on (the
+correctness core and project lenses always run; `--no-triage` removes the step
+and `--lenses a,b,c` pins the set).
 
 ## Verify your changes
 
@@ -16,7 +19,7 @@ bun compiler/cli.ts high --fix  # inspect a composed prompt (add --worktree <dir
 
 `bun test` also works (`npm test` / `npm run cells` are wired up). Run verify
 after **any** compiler change — tests assert exact substrings of the composed
-prompts (e.g. `8 independent finders`, `≤8 findings`,
+prompts (e.g. `8 independent finders` under `--no-triage`, `≤8 findings`,
 `Phase 3 — Sweep for gaps`), so rewording fragments breaks them. The sticky-level
 test reads/writes the real `~/.local/state/opencode/code-review-level` file and
 restores it; don't "fix" that.

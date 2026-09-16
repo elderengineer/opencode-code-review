@@ -4,7 +4,11 @@ import {
   TASK_TOOL,
   SPAWN_FALLBACK_NOTE,
   MODEL_FALLBACK_CLAUSE,
-  LENS_SET_BY_LEVEL,
+  LENS_LIST_BY_LEVEL,
+  LENS_NAMES,
+  TRIAGE_LENSES,
+  TRIAGE_SKIPPABLE_LENSES,
+  lensSetOf,
   CLEANUP_FINDING_CONTRACT,
   PHASE_2_VERIFY_3STATE,
   PHASE_2_VERIFY_RECALL,
@@ -41,6 +45,16 @@ export interface CellInput {
    * auto-routed — empty/undefined when a model is pinned or inherited.
    */
   fallbacks?: string[];
+  /**
+   * Inline triage: let the executing agent drop perspective lenses the diff
+   * gives nothing to act on. Default on; `--no-triage` sets false.
+   */
+  triage?: boolean;
+  /**
+   * `--lenses` explicit built-in lens selection, in order. Present → no
+   * triage; the caller decided.
+   */
+  lensesOverride?: string[];
 }
 
 // --- lead-ins ---------------------------------------------------------------
@@ -95,38 +109,54 @@ qualifies, output exactly \`(none)\`.`;
 
 // --- medium / high / max: finder fleet + verify (+ sweep at max) -------------
 
-function fleetCell({ level, reviewer, lenses, fallbacks }: CellInput): string {
+function fleetCell({ level, reviewer, lenses, fallbacks, triage, lensesOverride }: CellInput): string {
   const wide = level === "max";
-  const builtIns = wide ? 10 : 8;
   const perLensCap = wide ? 8 : 6;
   const cap = FINDINGS_CAP[level];
-  const total = builtIns + lenses.specialists.length;
+
+  // Defensive: drop names that are not built-in lenses (args already reports
+  // them), so a direct composeCell call cannot emit an `undefined` lens body.
+  const overrideNames = lensesOverride?.filter((n) => (LENS_NAMES as readonly string[]).includes(n));
+  const override = overrideNames !== undefined && overrideNames.length > 0 ? overrideNames : undefined;
+  const selected = override ?? LENS_LIST_BY_LEVEL[level as "medium" | "high" | "max"];
+
+  // Perspective lenses this run's inline triage may drop: in the level's set,
+  // and never one a project replaced (the replacement says the project cares).
+  // No eligible lens (or an explicit `--lenses` pin) → no triage step at all.
+  const skippable = triage !== false && override === undefined
+    ? selected.filter(
+        (n) => (TRIAGE_SKIPPABLE_LENSES as readonly string[]).includes(n) && !lenses.lensReplacements.has(n),
+      )
+    : [];
+  const triageOn = skippable.length > 0;
+  const triageText = triageOn ? TRIAGE_LENSES(skippable) : "";
+
+  const total = selected.length + lenses.specialists.length;
   const lensNote = lenses.specialists.length > 0
     ? ` + ${lenses.specialists.length} project lens${lenses.specialists.length > 1 ? "es" : ""}`
     : "";
 
   const lensTexts = [
-    swapLensTexts(LENS_SET_BY_LEVEL[level as "medium" | "high" | "max"], lenses.lensReplacements),
+    swapLensTexts(lensSetOf(selected), lenses.lensReplacements),
     ...lenses.specialists.map(specialistBrief),
   ].join("\n");
 
-  const tag = wide
-    ? `${level} effort → ${total} lenses × ${perLensCap} candidates → 1-vote verify → sweep → ≤${cap} findings`
-    : level === "high"
-      ? `high effort → ${total} lenses × ${perLensCap} candidates → 1-vote verify (recall-biased) → ≤${cap} findings`
-      : `medium effort → ${total} lenses × ${perLensCap} candidates → 1-vote verify → ≤${cap} findings`;
+  const scope = triageOn ? `up to ${total} lenses` : `${total} lens${total === 1 ? "" : "es"}`;
+  const verifyTag = level === "medium" ? "1-vote verify" : "1-vote verify (recall-biased)";
+  const tag = `${level} effort → ${triageOn ? "triage → " : ""}${scope} × ${perLensCap} candidates → ${verifyTag}${wide ? " → sweep" : ""} → ≤${cap} findings`;
 
-  const heading = wide
-    ? `## Phase 1 — Find candidates (5 correctness lenses + 3 cleanup lenses + 1 altitude lens + 1 conventions lens${lensNote}, up to ${perLensCap} each)`
-    : `## Phase 1 — Find candidates (3 correctness lenses + 3 cleanup lenses + 1 altitude lens + 1 conventions lens${lensNote}, up to ${perLensCap} each)`;
+  const heading = `## Phase 1 — Find candidates (${triageOn ? "up to " : ""}${total} lens${total === 1 ? "" : "es"}${lensNote}, up to ${perLensCap} each)`;
 
+  const runClause = triageOn
+    ? "Run **one finder per lens below that you kept in triage**"
+    : `Run **${total} independent finder${total === 1 ? "" : "s"}**`;
   const finderBrief = wide
-    ? `Run **${total} independent finders** via the ${TASK_TOOL} tool
+    ? `${runClause} via the ${TASK_TOOL} tool
 (subagent_type: \`${reviewer}\`). Each
 surfaces **up to ${perLensCap} candidate findings**. Do NOT let one lens's conclusions
 suppress another's — if two lenses flag the same line for different reasons,
 record both. ${SPAWN_FALLBACK_NOTE}`
-    : `Run **${total} independent finders** via the ${TASK_TOOL} tool
+    : `${runClause} via the ${TASK_TOOL} tool
 (subagent_type: \`${reviewer}\`). Each
 surfaces **up to ${perLensCap} candidate findings** with \`file\`, \`line\`, a one-line
 \`summary\`, and a concrete \`failure_scenario\`. ${SPAWN_FALLBACK_NOTE}`;
@@ -160,7 +190,7 @@ ${LEAD_IN[level]}
 
 ${lensBlock(lenses)}
 ${PHASE_0_GATHER_DIFF}
-${heading}
+${triageText}${heading}
 
 ${finderBrief}
 

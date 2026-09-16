@@ -85,7 +85,14 @@ export async function composeReview(rawArguments: string, options: CompileOption
   const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder, updateNotice });
   const targetClause = args.target ? `Review target: \`${args.target}\`\n\n` : "";
   const shapeNote = heavyShapeNote(level, digest, lenses.specialists.length);
-  const cell = composeCell({ level, reviewer: reviewerFor(level), lenses, fallbacks });
+  const cell = composeCell({
+    level,
+    reviewer: reviewerFor(level),
+    lenses,
+    fallbacks,
+    triage: args.triage,
+    lensesOverride: args.lenses,
+  });
 
   const targetHead = args.target.split(/\s+/)[0] ?? "";
   const commentAppendix = !args.comment

@@ -54,7 +54,7 @@ commands, and agents load at startup only.
 ## Usage reference
 
 ```
-/code-review [low|medium|high|max] [--fix] [--comment] [--model auto|<model>] [<target>] [using <model>]
+/code-review [low|medium|high|max] [--fix] [--comment] [--no-triage] [--lenses a,b,c] [--model auto|<model>] [<target>] [using <model>]
 ```
 
 | piece | meaning |
@@ -62,6 +62,8 @@ commands, and agents load at startup only.
 | level | effort; omitted → reuses the last level you typed (sticky), first run defaults to `medium` |
 | `--fix` | apply surviving findings to the working tree, not just report |
 | `--comment` | post findings to the PR (`gh`) or MR (`glab mr note`) |
+| `--no-triage` | run the full lens fleet instead of letting [triage](#selective-finders-triage) choose it |
+| `--lenses a,b,c` | pin the built-in finder lenses (comma-separated); skips triage |
 | `<target>` | PR number, branch, `a..b` range, or path — narrows the diff under review |
 | `--model` | `auto` (cheapest favorite, see below) or a `provider/model` pin — same as `using` |
 | `using <model>` | pin the fleet model, e.g. `using opencode-go/deepseek-v4-flash` (see [Models & effort](#models--effort)) |
@@ -82,7 +84,30 @@ accepted but always reported ignored.
 - **precision rubric** (medium): keep CONFIRMED/PLAUSIBLE, refute aggressively.
 - **recall rubric** (high+): PLAUSIBLE by default; REFUTED only when provable
   from the code.
+- medium/high/max run [triage](#selective-finders-triage) first, so the finder
+  count is the cap, not a fixed team.
 - Findings are a JSON array, ranked most-severe first, `[]` when clean.
+
+## Selective finders (triage)
+
+At medium and above the finder set is chosen per review, not fixed. Before the
+lens finders spawn, the executing agent reads the diff (Phase 0) and drops the
+perspective lenses the changed lines give nothing to act on — a documentation-
+only diff has no new computation to make efficient, nothing to simplify, no new
+code that might duplicate a helper.
+
+- Only `reuse`, `simplification`, `efficiency`, `altitude`, `conventions`
+  (and, at max, `language-pitfalls` and `wrapper-proxy`) can be dropped.
+- The correctness core — `line-scan`, `removed-behavior`, `cross-file` — always
+  runs, and so does every project lens. A lens a project has **replaced** with
+  its own text is never dropped.
+- The bias is to keep: a lens is dropped only with something concrete to point
+  at, and the review says in one line which lenses it dropped and why.
+- `--no-triage` runs the full fleet. `--lenses a,b,c` pins the built-in set and
+  skips the step entirely — useful when the caller already knows the change, for
+  example `--lenses line-scan,cross-file` for a small logic fix. A pin that
+  omits the correctness core is flagged in the review preamble. Project lenses
+  are unaffected by `--lenses`; path gating still decides them.
 
 ## Models & effort
 
@@ -139,10 +164,10 @@ background on the first `/code-review` call, so startup stays fast.
 2. The tool compiles the full instruction prompt: preamble (level fallbacks) →
    target clause → heavy-shape note (when the diff is large) → fleet hint →
    level cell → flag appendices.
-3. The model follows it: gathers the diff (**Phase 0**), spawns
-   `reviewer-<level>` finder subagents — one per lens (**Phase 1**), runs one
-   verifier per candidate (**Phase 2**), optionally sweeps for gaps
-   (**Phase 3**, max), emits ranked JSON findings.
+3. The model follows it: gathers the diff (**Phase 0**), chooses the lens set
+   (**triage**, medium+), spawns `reviewer-<level>` finder subagents — one per
+   kept lens (**Phase 1**), runs one verifier per candidate (**Phase 2**),
+   optionally sweeps for gaps (**Phase 3**, max), emits ranked JSON findings.
 4. `--fix` applies them; `--comment` posts them.
 
 ## Updates
@@ -227,8 +252,10 @@ You are reviewing the Android app (Kotlin, Compose, coroutines)…
 ```
 
 - Gated lenses that don't match the diff fall back to built-in text.
-- Fleet math: medium/high run 8 + N finders, max runs 10 + N (N = active
-  new-name project lenses); `low` never spawns. Spawning is unthrottled — on a
+- Fleet math: medium/high run at most 8 + N finders, max at most 10 + N (N =
+  active new-name project lenses); [triage](#selective-finders-triage) may drop
+  perspective lenses before they spawn, and `low` never spawns. A built-in lens
+  a project replaced with its own text is never dropped by triage. Spawning is unthrottled — on a
   rate-limit rejection the orchestrator waits, re-issues, and halves its
   in-flight subagents until the provider recovers; a repeat failure on the same
   spawn falls back to inline sequential work, so congestion degrades the review
