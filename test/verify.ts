@@ -77,6 +77,18 @@ function check(name: string, cond: boolean) {
 
   const f = parseCommand("");
   check("empty invocation", f.level === undefined && f.target === "" && !f.fix && !f.comment && !f.post);
+  check("triage on by default", f.triage === true && parseCommand("medium").triage === true);
+  check("--no-triage parsed", parseCommand("medium --no-triage").triage === false);
+
+  const lf = parseCommand("medium --lenses line-scan,cross-file,reuse");
+  check("--lenses parsed in order", lf.lenses?.join(",") === "line-scan,cross-file,reuse" && lf.level === "medium" && lf.target === "");
+  check("--lenses deduped", parseCommand("--lenses line-scan,line-scan").lenses?.join(",") === "line-scan");
+  const lfBad = parseCommand("high --lenses line-scan,bogus");
+  check("known lens kept, unknown reported", lfBad.lenses?.join(",") === "line-scan" && lfBad.ignoredLenses?.join(",") === "bogus");
+  check("all-unknown lens flag leaves no pin", parseCommand("--lenses bogus").lenses === undefined && parseCommand("--lenses bogus").ignoredLenses?.join(",") === "bogus");
+  check("empty --lenses is no pin", parseCommand("--lenses ,").lenses === undefined);
+  check("--lenses value not a target", parseCommand("--lenses line-scan").target === "");
+  check("no lenses flag means no pin", parseCommand("medium").lenses === undefined && parseCommand("medium").ignoredLenses === undefined);
 
   const t = parseCommand("hihg");
   check("transposed typo detected", t.mistypedLevel === "hihg" && isLevelTypo("hihg"));
@@ -451,15 +463,17 @@ const gitRunner = (dir: string) => (args: string[]) =>
 
 {
   console.log("cells");
-  const cell = (level: (typeof LEVELS)[number]) =>
-    composeCell({ level, reviewer: reviewerFor(level), lenses: EMPTY_BUNDLE });
+  const cell = (level: (typeof LEVELS)[number], opts?: { triage?: boolean; lensesOverride?: string[] }) =>
+    composeCell({ level, reviewer: reviewerFor(level), lenses: EMPTY_BUNDLE, ...opts });
+  const triageSection = (s: string) => s.slice(s.indexOf("## Triage —"), s.indexOf("## Phase 1 —"));
 
   const low = cell("low");
   check("low: single pass, no fleet", low.includes("No subagents, no full-file reads"));
   check("low: cap 4 and (none) marker", low.includes("≤4 findings") && low.includes("(none)"));
   check("low: no verify phase", !low.includes("Phase 2"));
 
-  const medium = cell("medium");
+  // full fleet (`--no-triage`): the pre-triage behavior and wording
+  const medium = cell("medium", { triage: false });
   check("medium: 8 built-in finders", medium.includes("8 independent finders"));
   check("medium: names reviewer subagent", medium.includes("reviewer-medium"));
   check("medium: precise rubric", medium.includes("CONFIRMED") && medium.includes("PLAUSIBLE by default") === false);
@@ -474,13 +488,14 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("medium: inline fallback on repeated congestion", medium.includes("run that lens or verification") && medium.includes("sequentially"));
   check("medium: no spawn wave cap", !medium.includes("waves of at most"));
   check("medium: note embedded at both spawn sites", medium.split(SPAWN_FALLBACK_NOTE).length - 1 === 2);
+  check("--no-triage: no triage step", !medium.includes("## Triage —"));
 
-  const high = cell("high");
+  const high = cell("high", { triage: false });
   check("high: recall rubric", high.includes("PLAUSIBLE by default"));
   check("high: cap 10", high.includes("≤10 findings"));
   check("high: halve in-flight on congestion", high.includes("half as many spawns in flight") && high.includes("429"));
 
-  const max = cell("max");
+  const max = cell("max", { triage: false });
   check("max: extended set (language-pitfalls)", max.includes("Language-pitfall specialist"));
   check("max: sweep phase", max.includes("Phase 3 — Sweep for gaps"));
   check("max: 10 finders", max.includes("10 independent finders"));
@@ -490,6 +505,45 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("max: sweep congestion protocol", max.includes("half as many spawns in flight"));
   check("max: no spawn wave cap", !max.includes("waves of at most"));
   check("max: note embedded at all three spawn sites", max.split(SPAWN_FALLBACK_NOTE).length - 1 === 3);
+
+  // triage on by default: the agent chooses the lens set from the diff
+  const mediumTriage = cell("medium");
+  check("medium: triage by default", mediumTriage.includes("## Triage — choose the finder lenses") && mediumTriage.includes("up to 8 lenses"));
+  check("medium: triage tag", mediumTriage.includes("medium effort → triage → up to 8 lenses × 6 candidates"));
+  check("medium: triage finder brief", mediumTriage.includes("one finder per lens below that you kept in triage"));
+  check("medium: triage biases toward keeping", mediumTriage.includes("this step lowers coverage") && mediumTriage.includes("if you cannot name something concrete, keep it"));
+  const block = triageSection(mediumTriage);
+  check("triage offers the perspective lenses", block.includes("- `efficiency`") && block.includes("- `conventions`") && block.includes("- `altitude`"));
+  check("triage withholds the correctness core", !block.includes("- `line-scan`") && !block.includes("- `removed-behavior`") && !block.includes("- `cross-file`"));
+  const maxTriage = triageSection(cell("max"));
+  check("max triage offers the extended lenses", maxTriage.includes("- `language-pitfalls`") && maxTriage.includes("- `wrapper-proxy`"));
+
+  // a project replacement says the project cares → triage cannot drop it
+  const replaced = { ...EMPTY_BUNDLE, lensReplacements: new Map([["reuse", "### Reuse\n\nProject reuse text."]]) };
+  const replacedBlock = triageSection(composeCell({ level: "medium", reviewer: reviewerFor("medium"), lenses: replaced }));
+  check("replaced lens withheld from triage", !replacedBlock.includes("- `reuse`") && replacedBlock.includes("- `simplification`"));
+
+  // --lenses override: the caller decided; no triage, only the named lenses
+  const pinned = cell("medium", { lensesOverride: ["cross-file", "efficiency"] });
+  check("override skips triage", !pinned.includes("## Triage —"));
+  check("override runs only the named lenses", pinned.includes(LENS_HEADINGS["cross-file"]) && pinned.includes(LENS_HEADINGS["efficiency"]));
+  check("override drops the rest", !pinned.includes(LENS_HEADINGS["line-scan"]) && !pinned.includes(LENS_HEADINGS["simplification"]));
+  check("override tag counts the selection", pinned.includes("2 lenses × 6 candidates"));
+  const oneLens = cell("low", { lensesOverride: ["line-scan"] });
+  check("override ignored at low", !oneLens.includes(LENS_HEADINGS["line-scan"]));
+  const allReplaced = {
+    ...EMPTY_BUNDLE,
+    lensReplacements: new Map(
+      ["reuse", "simplification", "efficiency", "altitude", "conventions"].map((n) => [n, `### ${n}\n\nProject text.`] as [string, string]),
+    ),
+  };
+  const noSkippable = composeCell({ level: "medium", reviewer: reviewerFor("medium"), lenses: allReplaced });
+  check("nothing skippable → triage omitted", !noSkippable.includes("## Triage —") && noSkippable.includes("8 independent finders"));
+
+  const unknownOverride = cell("medium", { lensesOverride: ["bogus"] });
+  check("unknown override name falls back to triage", unknownOverride.includes("## Triage —"));
+  const unknownOnly = cell("medium", { lensesOverride: ["bogus"], triage: false });
+  check("all-unknown override falls back to the level set", unknownOnly.includes("8 lenses × 6 candidates"));
 }
 
 // --- lenses --------------------------------------------------------------------
@@ -560,10 +614,14 @@ const gitRunner = (dir: string) => (args: string[]) =>
     level: "medium",
     reviewer: reviewerFor("medium"),
     lenses: webOnly,
+    triage: false,
   });
   check("specialist extends fleet count", mediumWithLens.includes("9 independent finders"));
   check("specialist brief present", mediumWithLens.includes("### fp (project lens)"));
   check("prepend inside cell", mediumWithLens.includes("## Project lenses"));
+  const mediumWithLensTriage = composeCell({ level: "medium", reviewer: reviewerFor("medium"), lenses: webOnly });
+  check("specialist still runs under triage", mediumWithLensTriage.includes("up to 9 lenses") && mediumWithLensTriage.includes("### fp (project lens)"));
+  check("specialist is never skippable", !mediumWithLensTriage.includes("- `fp`"));
 
   rmSync(dir, { recursive: true, force: true });
   rmSync(bare, { recursive: true, force: true });
@@ -590,6 +648,20 @@ const gitRunner = (dir: string) => (args: string[]) =>
   const p3 = buildPreamble({ args: post, remembered: undefined, level: "medium" });
   check("--post reported ignored", p3.includes("--post"));
 
+  const lensPin = buildPreamble({ args: parseCommand("medium --lenses line-scan,cross-file"), remembered: undefined, level: "medium" });
+  check("lens pin announced", lensPin.includes("Finder lenses pinned") && lensPin.includes("triage is skipped"));
+  const pinNoCore = buildPreamble({ args: parseCommand("medium --lenses efficiency"), remembered: undefined, level: "medium" });
+  check("pin without a core lens warns", pinNoCore.includes("No correctness-core lens is included"));
+  const pinCore = buildPreamble({ args: parseCommand("medium --lenses line-scan,efficiency"), remembered: undefined, level: "medium" });
+  check("pin with a core lens does not warn", !pinCore.includes("No correctness-core lens"));
+  const noTriage = buildPreamble({ args: parseCommand("medium --no-triage"), remembered: undefined, level: "medium" });
+  check("triage-off announced", noTriage.includes("Triage off"));
+  check("triage-on is quiet", buildPreamble({ args: parseCommand("medium"), remembered: undefined, level: "medium" }) === "");
+  const badLens = buildPreamble({ args: parseCommand("medium --lenses bogus"), remembered: undefined, level: "medium" });
+  check("unknown lens name reported", badLens.includes("Ignoring unrecognized lens name") && badLens.includes("bogus"));
+  const lowLens = buildPreamble({ args: parseCommand("low --lenses line-scan"), remembered: undefined, level: "low" });
+  check("--lenses ignored at low", lowLens.includes("low runs a single diff pass"));
+
   const quiet = parseCommand("high");
   check("no noise for explicit level", buildPreamble({ args: quiet, remembered: undefined, level: "high" }) === "");
 }
@@ -606,6 +678,13 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("reviewer named", out.prompt.includes("reviewer-medium"));
   check("fix appendix", out.prompt.includes("Applying fixes (--fix)"));
   check("no comment appendix", !out.prompt.includes("Posting to GitHub"));
+  check("triage defaults on end to end", out.prompt.includes("## Triage — choose the finder lenses"));
+
+  const noTriage = await composeReview("medium --no-triage", { worktree: dir, remember: false, updateCheck: false });
+  check("--no-triage runs the full fleet", noTriage.prompt.includes("8 independent finders") && !noTriage.prompt.includes("## Triage —"));
+  const pinnedLenses = await composeReview("medium --lenses line-scan", { worktree: dir, remember: false, updateCheck: false });
+  check("--lenses pins the built-in fleet", pinnedLenses.prompt.includes("1 independent finder") && !pinnedLenses.prompt.includes("## Triage —"));
+  check("--lenses text excludes unselected lenses", !pinnedLenses.prompt.includes(LENS_HEADINGS["efficiency"]));
 
   const commented = await composeReview("--comment 42", { worktree: dir, remember: false, updateCheck: false });
   check("comment appendix", commented.prompt.includes("Posting to GitHub (--comment)"));

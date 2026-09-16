@@ -115,7 +115,7 @@ function lensAgent(pin: LensPins, body: string) {
 
 const COMMAND_DESCRIPTION =
   "Review the current diff or a PR for bugs and cleanups. " +
-  "Usage: [low|medium|high|max] [--fix] [--comment] [--model auto|<provider/model>] [<pr#>|<branch>|<path>]";
+  "Usage: [low|medium|high|max] [--fix] [--comment] [--no-triage] [--lenses a,b,c] [--model auto|<provider/model>] [<pr#>|<branch>|<path>]";
 
 const CREATE_LENS_DESCRIPTION =
   "Create a project lens for code-review (interactive): goal, name, model, " +

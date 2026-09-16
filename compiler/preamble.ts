@@ -1,5 +1,5 @@
 import type { Level } from "./fragments.ts";
-import { LEVELS } from "./fragments.ts";
+import { CORE_LENSES, LENS_NAMES, LEVELS } from "./fragments.ts";
 import { MODEL_REF_RE, type CommandInvocation } from "./args.ts";
 import { MODEL_AUTO } from "./effort.ts";
 import { routeRef, type LadderEntry } from "./route.ts";
@@ -83,6 +83,29 @@ export function modelPinNote({ args, pinnedModel, autoLadder }: PreambleInput): 
   return "";
 }
 
+/**
+ * Parenthetical for the finder-lens selection: an explicit `--lenses` pin (no
+ * triage), a disabled triage, or ignored/unknown lens names.
+ */
+function lensNote(args: CommandInvocation, level: Level): string {
+  const unknown = args.ignoredLenses !== undefined
+    ? `Ignoring unrecognized lens name${args.ignoredLenses.length > 1 ? "s" : ""} ${args.ignoredLenses.map((l) => `"${l}"`).join(", ")}; valid lenses: ${LENS_NAMES.join(", ")}.`
+    : "";
+  if (args.lenses !== undefined) {
+    if (level === "low") {
+      return `(\`--lenses\` applies to the finder fleet (medium/high/max); low runs a single diff pass.${unknown ? " " + unknown : ""})\n\n`;
+    }
+    const hasCore = args.lenses.some((l) => (CORE_LENSES as readonly string[]).includes(l));
+    const noCore = hasCore ? "" : " No correctness-core lens is included, so logic and crash bugs may go unreported.";
+    return `(Finder lenses pinned to ${args.lenses.map((l) => `\`${l}\``).join(", ")} — triage is skipped.${noCore}${unknown ? " " + unknown : ""})\n\n`;
+  }
+  if (unknown !== "") return `(${unknown})\n\n`;
+  if (!args.triage && level !== "low") {
+    return `(Triage off — running the full ${level} lens set.)\n\n`;
+  }
+  return "";
+}
+
 /** Parenthetical for a pending plugin update — surfaced once per version. */
 const updateNote = ({ version, notes }: UpdateNotice): string => {
   const detail = notes ? ` — ${notes}` : "";
@@ -113,5 +136,5 @@ export function buildPreamble(input: PreambleInput): string {
   }
 
   return body + (args.post ? POST_IGNORED : "") + modelPinNote(input) +
-    (input.updateNotice ? updateNote(input.updateNotice) : "");
+    lensNote(args, level) + (input.updateNotice ? updateNote(input.updateNotice) : "");
 }

@@ -1,14 +1,15 @@
 import type { Level } from "./fragments.ts";
-import { LEVELS } from "./fragments.ts";
+import { LEVELS, LENS_NAMES } from "./fragments.ts";
 
 /**
  * Command invocation parsing (the opencode command receives everything the
  * user typed after the command name as $ARGUMENTS — this module makes sense
  * of it).
  *
- * Leading flags: --comment, --fix, --post, --no-post. `using <provider/model>`
- * or `--model <value>` pins the fleet model (`default` clears the pin, `auto`
- * routes to the cheapest favorite). The first remaining token may be an effort
+ * Leading flags: --comment, --fix, --post, --no-post, --no-triage. `using
+ * <provider/model>` or `--model <value>` pins the fleet model (`default`
+ * clears the pin, `auto` routes to the cheapest favorite); `--lenses a,b,c`
+ * pins the built-in finder lenses. The first remaining token may be an effort
  * level. Everything after the level is the review target.
  */
 
@@ -20,16 +21,22 @@ export interface CommandInvocation {
   comment: boolean;
   fix: boolean;
   post: boolean;
+  /** Triage the diff to select perspective lenses; `--no-triage` turns it off. */
+  triage: boolean;
+  /** `--lenses` built-in lens names to run, in order; `undefined` → triage or the level default. */
+  lenses: string[] | undefined;
+  /** `--lenses` entries that are not built-in lens names, reported and ignored. */
+  ignoredLenses: string[] | undefined;
   /** Raw `using` argument: a `provider/model` ref, or `default` to clear. */
   modelPin: string | undefined;
   /** They typed something level-shaped that isn't a level (e.g. "hihg"). */
   mistypedLevel: string | undefined;
 }
 
-const KNOWN_FLAGS = new Set(["comment", "fix", "post", "no_post"]);
+const KNOWN_FLAGS = new Set(["comment", "fix", "post", "no_post", "no_triage"]);
 
 /** `--flag <value>` flags — the value is the next token, not a positional. */
-const VALUE_FLAGS = new Set(["model"]);
+const VALUE_FLAGS = new Set(["model", "lenses"]);
 
 /** `provider/model` — the shape opencode expects in agent `model` fields. */
 export const MODEL_REF_RE = /^[a-z0-9][\w.-]*\/[\w.-]+$/i;
@@ -38,16 +45,24 @@ export const MODEL_REF_RE = /^[a-z0-9][\w.-]*\/[\w.-]+$/i;
  * Collect known `--flag` tokens wherever they appear (levels come first in
  * the usage string, so flags may sit before or after the level/target).
  */
-function scanFlags(tokens: string[]): { flags: Set<string>; rest: string[]; modelFlag: string | undefined } {
+function scanFlags(tokens: string[]): {
+  flags: Set<string>;
+  rest: string[];
+  modelFlag: string | undefined;
+  lensFlag: string | undefined;
+} {
   const flags = new Set<string>();
   const rest: string[] = [];
   let modelFlag: string | undefined;
+  let lensFlag: string | undefined;
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
     const m = tok.match(/^--([A-Za-z-]+)$/);
     const name = m?.[1].replaceAll("-", "_").toLowerCase();
     if (m && name !== undefined && VALUE_FLAGS.has(name) && tokens[i + 1] !== undefined) {
-      modelFlag = tokens[i + 1].replaceAll("`", "").replaceAll("'", "").replaceAll('"', "");
+      const value = tokens[i + 1].replaceAll("`", "").replaceAll("'", "").replaceAll('"', "");
+      if (name === "lenses") lensFlag = value;
+      else modelFlag = value;
       i++;
       continue;
     }
@@ -57,7 +72,14 @@ function scanFlags(tokens: string[]): { flags: Set<string>; rest: string[]; mode
     }
     rest.push(tok);
   }
-  return { flags, rest, modelFlag };
+  return { flags, rest, modelFlag, lensFlag };
+}
+
+/** Split `--lenses` on commas, trim, drop empties; `undefined` when nothing remains. */
+function parseLensFlag(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return names.length > 0 ? names : undefined;
 }
 
 /** Matches a token that *looks* like a level (first 3 chars + any suffix). */
@@ -90,7 +112,7 @@ function asLevel(token: string): Level | undefined {
 
 export function parseCommand(raw: string): CommandInvocation {
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
-  const { flags, rest, modelFlag } = scanFlags(tokens);
+  const { flags, rest, modelFlag, lensFlag } = scanFlags(tokens);
 
   // `using <provider/model>` (or `using default|auto`) — wherever it appears.
   let usingPin: string | undefined;
@@ -107,18 +129,29 @@ export function parseCommand(raw: string): CommandInvocation {
   const comment = flags.has("comment");
   const fix = flags.has("fix");
   const post = flags.has("post") && !flags.has("no_post");
+  const triage = !flags.has("no_triage");
+
+  // `--lenses`: partition the requested names into built-in ones (honored, in
+  // order, deduped) and unknown ones (reported, ignored).
+  const requested = parseLensFlag(lensFlag);
+  const known = requested?.filter((n) => (LENS_NAMES as readonly string[]).includes(n));
+  const unknown = requested?.filter((n) => !(LENS_NAMES as readonly string[]).includes(n));
+  const lenses = known !== undefined && known.length > 0 ? [...new Set(known)] : undefined;
+  const ignoredLenses = unknown !== undefined && unknown.length > 0 ? [...new Set(unknown)] : undefined;
 
   // Explicit --model outranks `using` when both are typed.
   const modelPin = modelFlag ?? usingPin;
 
   const head = positional[0] ?? "";
 
+  const base = { comment, fix, post, triage, lenses, ignoredLenses, modelPin };
+
   const level = asLevel(head);
   if (level !== undefined) {
     return {
       level,
       target: cleanTarget(positional.slice(1)),
-      comment, fix, post, modelPin,
+      ...base,
       mistypedLevel: undefined,
     };
   }
@@ -127,7 +160,7 @@ export function parseCommand(raw: string): CommandInvocation {
   return {
     level: undefined,
     target: cleanTarget(typo ? positional.slice(1) : positional),
-    comment, fix, post, modelPin,
+    ...base,
     mistypedLevel: typo || LEVEL_PREFIX_RE.test(head) ? head : undefined,
   };
 }
