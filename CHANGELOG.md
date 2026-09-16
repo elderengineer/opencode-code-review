@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/elderengineer/opencode-code-review/compare/v0.3.1...v0.4.0) (2026-09-16)
+
+
+### Features
+
+* triage the diff to choose the finder lenses ([#17](https://github.com/elderengineer/opencode-code-review/issues/17)) ([1566431](https://github.com/elderengineer/opencode-code-review/commit/15664311a65c6d5fe795eefcedcd40f49a3ab14f))
+
 ## [0.3.1](https://github.com/elderengineer/opencode-code-review/compare/v0.3.0...v0.3.1) (2026-09-09)
 
 
