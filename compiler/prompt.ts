@@ -1,7 +1,7 @@
 import type { Level } from "./fragments.ts";
 import { parseCommand, pickLevel, MODEL_REF_RE, type CommandInvocation } from "./args.ts";
 import { rememberedLevel, rememberLevel, rememberedModel, rememberModel, MODEL_AUTO } from "./effort.ts";
-import { diffDigest, fleetHint, heavyShapeNote } from "./budget.ts";
+import { diffDigest, fleetHint, heavyShapeNote, generatedExclusionNote } from "./budget.ts";
 import { collectLenses } from "./lenses.ts";
 import { activeLadder, type LadderEntry } from "./route.ts";
 import { composeCell } from "./cells.ts";
@@ -12,8 +12,8 @@ import { githubCommentAppendix, gitlabCommentAppendix, fixAppendix } from "./app
 /**
  * Prompt assembly — the compiler entry point. Order:
  *
- *   preamble → target clause → heavy-shape note → fleet hint → cell →
- *   comment appendix → fix appendix
+ *   preamble → target clause → heavy-shape note → fleet hint →
+ *   generated-file note → cell → comment appendix → fix appendix
  */
 
 /** The injected subagent that runs finders/verifiers/sweep at this level. */
@@ -68,8 +68,10 @@ export async function composeReview(rawArguments: string, options: CompileOption
   const autoLadder = pinnedModel === MODEL_AUTO ? activeLadder() : undefined;
   const fallbacks = fallbackReviewers(level, autoLadder);
 
-  // One sandboxed git call feeds both the fleet hint and lens gating.
-  const digest = await diffDigest(args.target, worktree);
+  // One sandboxed git call feeds both the fleet hint and lens gating; a
+  // second one (`check-attr --stdin`) flags `linguist-generated` files
+  // (zero-lined unless `--include-generated`).
+  const digest = await diffDigest(args.target, worktree, { includeGenerated: args.includeGenerated });
   const [lenses, hint] = [await collectLenses(worktree, digest), fleetHint(level, args.target, digest)];
 
   let updateNotice: UpdateNotice | undefined;
@@ -85,6 +87,7 @@ export async function composeReview(rawArguments: string, options: CompileOption
   const preamble = buildPreamble({ args, remembered, level, pinnedModel, autoLadder, updateNotice });
   const targetClause = args.target ? `Review target: \`${args.target}\`\n\n` : "";
   const shapeNote = heavyShapeNote(level, digest, lenses.specialists.length);
+  const generatedNote = generatedExclusionNote(digest, args.includeGenerated);
   const cell = composeCell({
     level,
     reviewer: reviewerFor(level),
@@ -108,6 +111,7 @@ export async function composeReview(rawArguments: string, options: CompileOption
       targetClause +
       shapeNote +
       hint.text +
+      generatedNote +
       cell +
       commentAppendix +
       fixAppendixText,

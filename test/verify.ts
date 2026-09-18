@@ -12,7 +12,7 @@ import { composeCell } from "../compiler/cells.ts";
 import { collectLenses, readLensPins, swapLensTexts, EMPTY_BUNDLE } from "../compiler/lenses.ts";
 import { composeReview, reviewerFor } from "../compiler/prompt.ts";
 import { buildPreamble } from "../compiler/preamble.ts";
-import { diffDigest, decodeGitPath, heavyShapeNote } from "../compiler/budget.ts";
+import { diffDigest, decodeGitPath, heavyShapeNote, generatedExclusionNote, fleetHint } from "../compiler/budget.ts";
 import { extractJsonFindings, salvageSession } from "../compiler/salvage.ts";
 import { Database } from "bun:sqlite";
 import { cmpVersions, UPDATE_FILE, markNotified, readUpdateNotice, writeCache } from "../compiler/update.ts";
@@ -79,6 +79,9 @@ function check(name: string, cond: boolean) {
   check("empty invocation", f.level === undefined && f.target === "" && !f.fix && !f.comment && !f.post);
   check("triage on by default", f.triage === true && parseCommand("medium").triage === true);
   check("--no-triage parsed", parseCommand("medium --no-triage").triage === false);
+  check("--include-generated parsed", parseCommand("high --include-generated").includeGenerated === true);
+  check("generated files excluded by default", f.includeGenerated === false);
+  check("--include-generated value not a target", parseCommand("--include-generated").target === "");
 
   const lf = parseCommand("medium --lenses line-scan,cross-file,reuse");
   check("--lenses parsed in order", lf.lenses?.join(",") === "line-scan,cross-file,reuse" && lf.level === "medium" && lf.target === "");
@@ -302,20 +305,117 @@ const gitRunner = (dir: string) => (args: string[]) =>
   const d = await diffDigest("HEAD~1..HEAD", dir);
   check("binary file kept in digest", d?.files.includes("img.bin") === true);
   check("binary rows add no lines", d?.lines === 2);
+  check("binary rows are not generated", d?.generated.length === 0);
   rmSync(dir, { recursive: true, force: true });
   check("git C-quoted path decoded", decodeGitPath('"mobile/\\346\\226\\207\\346\\241\\243.kt"') === "mobile/文档.kt");
   check("rename collapsed to new path", decodeGitPath("old/{a => b}/c.txt") === "old/b/c.txt" && decodeGitPath("a.txt => b.txt") === "b.txt");
+}
+
+// --- linguist-generated exclusion ---------------------------------------------------
+
+{
+  console.log("generated exclusion");
+  const dir = mkdtempSync(join(tmpdir(), "ocr-gen-"));
+  const git = gitRunner(dir);
+  git(["init", "-q"]);
+  mkdirSync(join(dir, "drizzle", "meta"), { recursive: true });
+  writeFileSync(join(dir, ".gitattributes"), 'drizzle/meta/*_snapshot.json linguist-generated\npnpm-lock.yaml linguist-generated\nvalued.snap linguist-generated=true\n"ünï code.json" linguist-generated\n');
+  writeFileSync(join(dir, "hand.ts"), "one\n");
+  writeFileSync(join(dir, "drizzle", "meta", "0036_snapshot.json"), Array.from({ length: 3 }, (_, i) => `"k${i}": ${i}`).join("\n") + "\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "one"]);
+  writeFileSync(join(dir, "hand.ts"), "one changed\n");
+  writeFileSync(join(dir, "drizzle", "meta", "0036_snapshot.json"), Array.from({ length: 33 }, (_, i) => `"k${i}": ${i}`).join("\n") + "\n");
+  writeFileSync(join(dir, "pnpm-lock.yaml"), Array.from({ length: 20 }, (_, i) => `pkg${i}: hash`).join("\n") + "\n");
+  writeFileSync(join(dir, "valued.snap"), "v1\n");
+  writeFileSync(join(dir, "ünï code.json"), "ünï-marker\nline2\nline3\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "two"]);
+
+  const d = await diffDigest("HEAD~1..HEAD", dir);
+  check("generated files kept in digest", d?.files.includes("drizzle/meta/0036_snapshot.json") === true && d?.files.includes("pnpm-lock.yaml") === true);
+  check("generated files listed (unicode path round-trips)", d?.generated.join(",") === "drizzle/meta/0036_snapshot.json,pnpm-lock.yaml,valued.snap,ünï code.json");
+  check("generated lines not counted", d?.lines === 2); // only the hand.ts change
+  check("saved generated lines recorded", d?.generatedLines === 30 + 20 + 1 + 3);
+  const full = await diffDigest("HEAD~1..HEAD", dir, { includeGenerated: true });
+  check("--include-generated counts everything", full?.lines === 2 + 54 && full?.generated.length === 0);
+
+  // note: names paths and saved lines, and carries a runnable exclude command
+  const note = generatedExclusionNote(d, false);
+  check("note names excluded paths and saved lines", note.includes("drizzle/meta/0036_snapshot.json") && note.includes("valued.snap") && note.includes("about 54 lines"));
+  check("note says do not widen", note.includes("Do not widen the command back out"));
+  check("note short-circuits an all-generated scope", note.includes("do not spawn the finders"));
+  check("note quiet when opted in", generatedExclusionNote(d, true) === "");
+  check("note quiet without digest", generatedExclusionNote(undefined, false) === "");
+  check("note quiet with no generated files", generatedExclusionNote({ lines: 5, files: ["a.ts"], generated: [], generatedLines: 0 }, false) === "");
+  const many = Array.from({ length: 15 }, (_, i) => `gen/${i}.json`);
+  check("note folds long lists", generatedExclusionNote({ lines: 5, files: many, generated: many, generatedLines: 5 }, false).includes("and 3 more"));
+  const recipe = generatedExclusionNote({ lines: 5, files: [], generated: Array.from({ length: 101 }, (_, i) => `g/${i}.json`), generatedLines: 5 }, false);
+  check("huge generated sets fall back to the recipe", recipe.includes("check-attr -z --stdin") && !recipe.includes("```\ngit diff"));
+
+  // count = command: the emitted diff command's scope is exactly digest.lines
+  const cmd = note.match(/git diff [^\n]+/)?.[0] ?? "";
+  check("note carries the exclude-pathspec command", cmd.startsWith("git diff HEAD~1..HEAD -- .") && cmd.includes("':(exclude,literal)drizzle/meta/0036_snapshot.json'") && cmd.includes("':(exclude,literal)ünï code.json'"));
+  const cmdOut = spawnSync("bash", ["-c", cmd], { cwd: dir, encoding: "utf8" });
+  check("emitted command runs and keeps hand-written hunks", cmdOut.status === 0 && cmdOut.stdout.includes("hand.ts"));
+  check("emitted command drops every generated file", !cmdOut.stdout.includes("pkg0: hash") && !cmdOut.stdout.includes('"k29"') && !cmdOut.stdout.includes("ünï-marker"));
+  const numstatOut = spawnSync("bash", ["-c", `${cmd} | git apply --numstat`], { cwd: dir, encoding: "utf8" });
+  check("emitted command's numstat equals the digest", numstatOut.stdout.trim() === "1\t1\thand.ts");
+
+  // end to end: the composed prompt carries the note; the flag removes it
+  const run = await composeReview("high", { worktree: dir, remember: false, updateCheck: false });
+  check("composeReview includes exclusion note", run.prompt.includes("## Generated files — out of scope") && run.prompt.includes("drizzle/meta/0036_snapshot.json"));
+  check("fleet hint sizes to hand-written lines", run.prompt.includes("is about 2 lines"));
+  const optedIn = await composeReview("high --include-generated", { worktree: dir, remember: false, updateCheck: false });
+  check("--include-generated drops the note", !optedIn.prompt.includes("out of scope"));
+  check("--include-generated announced in preamble", optedIn.prompt.includes("counted and reviewed"));
+  check("--include-generated sizes the full diff", optedIn.prompt.includes("is about 56 lines"));
+
+  // stdin detection: one call covers 100+ paths (no argv batching to lean on)
+  const wide = mkdtempSync(join(tmpdir(), "ocr-gen-wide-"));
+  const gitWide = gitRunner(wide);
+  gitWide(["init", "-q"]);
+  writeFileSync(join(wide, ".gitattributes"), "f0*.ts linguist-generated\n");
+  for (let i = 0; i < 102; i++) writeFileSync(join(wide, `f${String(i).padStart(3, "0")}.ts`), "one\n");
+  gitWide(["add", "."]);
+  gitWide(["commit", "-qm", "one"]);
+  for (let i = 0; i < 102; i++) writeFileSync(join(wide, `f${String(i).padStart(3, "0")}.ts`), "one changed\n");
+  gitWide(["add", "."]);
+  gitWide(["commit", "-qm", "two"]);
+  const wideDigest = await diffDigest("HEAD~1..HEAD", wide);
+  check("stdin check-attr covers 100+ paths", wideDigest?.files.length === 102 && wideDigest?.generated.length === 100 && wideDigest?.lines === 4 && wideDigest?.generatedLines === 200);
+
+  // all-generated diff: the fleet hint must not say "about 0 lines"
+  const onlyGen = mkdtempSync(join(tmpdir(), "ocr-gen-only-"));
+  const gitOnly = gitRunner(onlyGen);
+  gitOnly(["init", "-q"]);
+  writeFileSync(join(onlyGen, ".gitattributes"), "gen.json linguist-generated\n");
+  writeFileSync(join(onlyGen, "gen.json"), "a\n");
+  gitOnly(["add", "."]);
+  gitOnly(["commit", "-qm", "one"]);
+  writeFileSync(join(onlyGen, "gen.json"), "a\nb\n");
+  gitOnly(["add", "."]);
+  gitOnly(["commit", "-qm", "two"]);
+  const onlyDigest = await diffDigest("HEAD~1..HEAD", onlyGen);
+  check("all-generated digest has zero lines", onlyDigest?.lines === 0 && onlyDigest?.generated.length === 1);
+  check("range-target hint names generated exclusion", fleetHint("high", "HEAD~1..HEAD", onlyDigest!).text.includes("only generated paths"));
+  const onlyRun = await composeReview("high", { worktree: onlyGen, remember: false, updateCheck: false });
+  check("all-generated run: hint special-cased, note fires", onlyRun.prompt.includes("only generated paths") && !onlyRun.prompt.includes("about 0 lines") && onlyRun.prompt.includes("## Generated files — out of scope"));
+
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(wide, { recursive: true, force: true });
+  rmSync(onlyGen, { recursive: true, force: true });
 }
 
 // --- heavy shape note --------------------------------------------------------------
 
 {
   console.log("heavy shape note");
-  const big = { lines: 1344, files: ["docs/plan/tla.md", "src/x.ts"] };
+  const big = { lines: 1344, files: ["docs/plan/tla.md", "src/x.ts"], generated: [], generatedLines: 0 };
   check("silent at low", heavyShapeNote("low", big, 4) === "");
   check("silent without digest", heavyShapeNote("medium", undefined, 4) === "");
-  check("silent on small diff", heavyShapeNote("medium", { lines: 300, files: ["a.ts"] }, 4) === "");
-  check("silent with one lens on mid diff", heavyShapeNote("medium", { lines: 900, files: ["a.ts"] }, 1) === "");
+  check("silent on small diff", heavyShapeNote("medium", { lines: 300, files: ["a.ts"], generated: [], generatedLines: 0 }, 4) === "");
+  check("silent with one lens on mid diff", heavyShapeNote("medium", { lines: 900, files: ["a.ts"], generated: [], generatedLines: 0 }, 1) === "");
   const fired = heavyShapeNote("medium", big, 4);
   check("fires on many lenses + large diff", fired.includes("Heavy review shape") && fired.includes("4 project lenses"));
   check("fires on very large diff alone", heavyShapeNote("high", { lines: 3000, files: ["a.ts"] }, 0).includes("Heavy review shape"));
@@ -565,7 +665,7 @@ const gitRunner = (dir: string) => (args: string[]) =>
   );
 
   // digest: only backend changed → gated lenses inactive, fp specialist active
-  const backendOnly = await collectLenses(dir, { lines: 100, files: ["backend/x.py"] });
+  const backendOnly = await collectLenses(dir, { lines: 100, files: ["backend/x.py"], generated: [], generatedLines: 0 });
   check("gated code lens inactive on non-matching diff", backendOnly.codeOverride === undefined);
   check("gated lens replacement inactive on non-matching diff", backendOnly.lensReplacements.size === 0);
   check("ungated specialist active", backendOnly.specialists.length === 1 && backendOnly.specialists[0].name === "fp");
@@ -573,15 +673,15 @@ const gitRunner = (dir: string) => (args: string[]) =>
   check("prepend excludes inactive code lens", !backendOnly.prepend.includes("Web frontend perspective."));
 
   // digest: web changed → code lens active
-  const webOnly = await collectLenses(dir, { lines: 100, files: ["web/a.ts"] });
+  const webOnly = await collectLenses(dir, { lines: 100, files: ["web/a.ts"], generated: [], generatedLines: 0 });
   check("gated code lens active on matching diff", webOnly.codeOverride === "Web frontend perspective.");
 
   // digest: web + mobile → code active, language-pitfalls replacement active
-  const mixed = await collectLenses(dir, { lines: 100, files: ["web/a.ts", "mobile/b.kt"] });
+  const mixed = await collectLenses(dir, { lines: 100, files: ["web/a.ts", "mobile/b.kt"], generated: [], generatedLines: 0 });
   check("lens replacement collected", mixed.lensReplacements.get("language-pitfalls")?.includes("Android pitfalls only") === true);
 
   // digest: mobile only → language-pitfalls replacement active, code lens inactive
-  const mobileOnly = await collectLenses(dir, { lines: 100, files: ["mobile/b.kt"] });
+  const mobileOnly = await collectLenses(dir, { lines: 100, files: ["mobile/b.kt"], generated: [], generatedLines: 0 });
   check("lens replacement gated to its paths", mobileOnly.lensReplacements.has("language-pitfalls") && mobileOnly.codeOverride === undefined);
 
   const swapped = swapLensTexts(EXTENDED_LENS_SET, mixed.lensReplacements);

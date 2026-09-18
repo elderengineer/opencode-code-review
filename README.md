@@ -54,7 +54,7 @@ commands, and agents load at startup only.
 ## Usage reference
 
 ```
-/code-review [low|medium|high|max] [--fix] [--comment] [--no-triage] [--lenses a,b,c] [--model auto|<model>] [<target>] [using <model>]
+/code-review [low|medium|high|max] [--fix] [--comment] [--no-triage] [--lenses a,b,c] [--model auto|<model>] [--include-generated] [<target>] [using <model>]
 ```
 
 | piece | meaning |
@@ -64,12 +64,22 @@ commands, and agents load at startup only.
 | `--comment` | post findings to the PR (`gh`) or MR (`glab mr note`) |
 | `--no-triage` | run the full lens fleet instead of letting [triage](#selective-finders-triage) choose it |
 | `--lenses a,b,c` | pin the built-in finder lenses (comma-separated); skips triage |
+| `--include-generated` | review files git marks `linguist-generated` (excluded by default, see below) |
 | `<target>` | PR number, branch, `a..b` range, or path — narrows the diff under review |
 | `--model` | `auto` (cheapest favorite, see below) or a `provider/model` pin — same as `using` |
 | `using <model>` | pin the fleet model, e.g. `using opencode-go/deepseek-v4-flash` (see [Models & effort](#models--effort)) |
 
 Mistype a level (`hihg`) and the preamble says so and falls back; `--post` is
 accepted but always reported ignored.
+
+**Generated files are ignored by default.** Changed paths the repo's git
+attributes mark `linguist-generated` (lockfiles, ORM schema snapshots, build
+output) don't count toward diff sizing — a migration PR that drags in a
+4,500-line snapshot still reviews as the few hundred hand-written lines it
+actually is. The review names the excluded paths and lines, and its diff
+command carries `:(exclude,literal)` pathspecs for them, so the generated
+bulk never enters the finders' context. `--include-generated` opts back in
+(announced in the preamble) when the generated file itself is the subject.
 
 ## Effort levels
 
@@ -163,6 +173,7 @@ background on the first `/code-review` call, so startup stays fast.
 1. `/code-review` calls the `code_review_prompt` tool with your raw arguments.
 2. The tool compiles the full instruction prompt: preamble (level fallbacks) →
    target clause → heavy-shape note (when the diff is large) → fleet hint →
+   generated-file note (when `linguist-generated` paths were excluded) →
    level cell → flag appendices.
 3. The model follows it: gathers the diff (**Phase 0**), chooses the lens set
    (**triage**, medium+), spawns `reviewer-<level>` finder subagents — one per

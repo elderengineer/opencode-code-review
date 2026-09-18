@@ -136,5 +136,7 @@ export function buildPreamble(input: PreambleInput): string {
   }
 
   return body + (args.post ? POST_IGNORED : "") + modelPinNote(input) +
-    lensNote(args, level) + (input.updateNotice ? updateNote(input.updateNotice) : "");
+    lensNote(args, level) +
+    (args.includeGenerated ? "(`--include-generated` — generated files are counted and reviewed; nothing is excluded.)\n\n" : "") +
+    (input.updateNotice ? updateNote(input.updateNotice) : "");
 }

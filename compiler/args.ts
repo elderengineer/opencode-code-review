@@ -6,11 +6,12 @@ import { LEVELS, LENS_NAMES } from "./fragments.ts";
  * user typed after the command name as $ARGUMENTS — this module makes sense
  * of it).
  *
- * Leading flags: --comment, --fix, --post, --no-post, --no-triage. `using
- * <provider/model>` or `--model <value>` pins the fleet model (`default`
- * clears the pin, `auto` routes to the cheapest favorite); `--lenses a,b,c`
- * pins the built-in finder lenses. The first remaining token may be an effort
- * level. Everything after the level is the review target.
+ * Leading flags: --comment, --fix, --post, --no-post, --no-triage,
+ * --include-generated. `using <provider/model>` or `--model <value>` pins the
+ * fleet model (`default` clears the pin, `auto` routes to the cheapest
+ * favorite); `--lenses a,b,c` pins the built-in finder lenses. The first
+ * remaining token may be an effort level. Everything after the level is the
+ * review target.
  */
 
 export interface CommandInvocation {
@@ -23,6 +24,8 @@ export interface CommandInvocation {
   post: boolean;
   /** Triage the diff to select perspective lenses; `--no-triage` turns it off. */
   triage: boolean;
+  /** `--include-generated`: count and review files git marks `linguist-generated`. */
+  includeGenerated: boolean;
   /** `--lenses` built-in lens names to run, in order; `undefined` → triage or the level default. */
   lenses: string[] | undefined;
   /** `--lenses` entries that are not built-in lens names, reported and ignored. */
@@ -33,7 +36,7 @@ export interface CommandInvocation {
   mistypedLevel: string | undefined;
 }
 
-const KNOWN_FLAGS = new Set(["comment", "fix", "post", "no_post", "no_triage"]);
+const KNOWN_FLAGS = new Set(["comment", "fix", "post", "no_post", "no_triage", "include_generated"]);
 
 /** `--flag <value>` flags — the value is the next token, not a positional. */
 const VALUE_FLAGS = new Set(["model", "lenses"]);
@@ -130,6 +133,7 @@ export function parseCommand(raw: string): CommandInvocation {
   const fix = flags.has("fix");
   const post = flags.has("post") && !flags.has("no_post");
   const triage = !flags.has("no_triage");
+  const includeGenerated = flags.has("include_generated");
 
   // `--lenses`: partition the requested names into built-in ones (honored, in
   // order, deduped) and unknown ones (reported, ignored).
@@ -144,7 +148,7 @@ export function parseCommand(raw: string): CommandInvocation {
 
   const head = positional[0] ?? "";
 
-  const base = { comment, fix, post, triage, lenses, ignoredLenses, modelPin };
+  const base = { comment, fix, post, triage, includeGenerated, lenses, ignoredLenses, modelPin };
 
   const level = asLevel(head);
   if (level !== undefined) {
