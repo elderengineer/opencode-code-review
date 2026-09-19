@@ -63,8 +63,11 @@ still work but must match `package.json` (guarded in `release.yml`).
   keep the plugin alive if a file is missing) — keep structure (models,
   variants, tools) in TS and prose in the .md files.
 - `compiler/prompt.ts` — `composeReview()`, the single compile entry:
-  parse args → sticky level → one sandboxed `git diff --numstat`
-  (`budget.ts`, feeds both fleet hint and lens gating) → lenses → cell →
+  parse args → sticky level → one sandboxed `git diff --numstat` plus one
+  `git check-attr linguist-generated --stdin` pass (`budget.ts`, feeds both
+  fleet hint and lens gating; generated files count zero lines and the
+  exclusion note hands the model a diff command with `:(exclude,literal)`
+  pathspecs unless `--include-generated`) → lenses → cell →
   `--comment`/`--fix` appendices.
 - `compiler/fragments.ts` — the phase/output prompt text lives here as exported
   constants (built-in lens text lives in `prompts/lenses/<name>.md`, loaded at
