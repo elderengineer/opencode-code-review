@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/elderengineer/opencode-code-review/compare/v0.4.0...v0.5.0) (2026-09-19)
+
+
+### Features
+
+* ignore linguist-generated files in the diff budget ([#20](https://github.com/elderengineer/opencode-code-review/issues/20)) ([2640722](https://github.com/elderengineer/opencode-code-review/commit/264072296ed34a836ff9f1ef458126a1d1602e50))
+
 ## [0.4.0](https://github.com/elderengineer/opencode-code-review/compare/v0.3.1...v0.4.0) (2026-09-16)
 
 
